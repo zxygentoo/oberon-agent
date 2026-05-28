@@ -222,8 +222,10 @@ Parser contract:
 
 **CALL parameter channel.** Before `Oberon.Call`, the dispatcher must point `Oberon.Par` at
 the received `par` bytes (commands read params via `Texts.OpenScanner(S, Oberon.Par.text,
-Oberon.Par.pos)` — see `System.GetArg`). So: build a `Texts.Text` from `par`, set
-`Oberon.Par.text := T; Oberon.Par.pos := 0`. Consequences: params must be **inline** (the
+Oberon.Par.pos)` — see `System.GetArg`). So: build a `Texts.Text` from `par`, then
+`Oberon.SetPar(dummyFrame, T, 0)` — *not* `Oberon.Par.text := T` (Oberon-07 makes another
+module's exported fields read-only to importers; the dummy `Display.Frame` is only used by
+`SetPar` to derive `Par.vwr`, which our commands ignore). Consequences: params must be **inline** (the
 `^`/selection path needs viewers and won't work headless); commands that read `Oberon.Par.vwr`
 /`.frame` (e.g. `System.Open`, `System.Directory`) are out of scope for `run_command` — which
 is why introspection gets its own Log-writing helpers (`Agent.*`).
@@ -232,6 +234,8 @@ is why introspection gets its own Log-writing helpers (`Agent.*`).
 
 "PCLink1 grown up": the same byte I/O plus a `PUT`/`GET`/`CALL` dispatcher installed as an
 `Oberon.Task`. It runs *inside* the live system, concurrent with the normal Oberon UI.
+(Implemented in `oberon/Agent.Mod`; compiles clean to 747 B code / 252 B data and is validated
+live — §7.)
 
 **State (Phase 1 — the server is essentially stateless):**
 
@@ -287,8 +291,9 @@ END Task;
 - `DoGet`: `RecName(name)`; `F := Files.Old(name)`; if `NIL` reply `stNotFound`; else reply
   `stOk` + stream `Files.Length(F)` bytes via `Files.ReadByte`/`Send`.
 - `DoCall`: `RecName(cmd)`; `RecInt(len)`; build `par` from `len` received bytes (`Texts.Write(PW,…)`
-  → `Texts.Open(par,"")` → `Texts.Append(par, PW.buf)`); `Oberon.Par.text := par;
-  Oberon.Par.pos := 0`; `beg := Oberon.Log.len`; `Oberon.Call(cmd, res)`; map `res`→`status`
+  → `Texts.Open(par,"")` → `Texts.Append(par, PW.buf)`); `Oberon.SetPar(parF, par, 0)`
+  (dummy `Display.Frame`; `Par` fields are read-only to importers); `beg := Oberon.Log.len`;
+  `Oberon.Call(cmd, res)`; map `res`→`status`
   (table §4.2); reply with the Log delta `[beg, Oberon.Log.len)`.
 
 **Format & line-ending handling (proxy-side, so Oberon stays native):**
@@ -329,9 +334,13 @@ Three concurrent ways in, by design:
 - **Languages.** Oberon-07 on the device (in `oberon/`); **Python** proxy (in `python/`, a
   `uv` project; package `pucxy`). A future imaging/storage layer would be Rust or Zig, decided
   later, independent of the proxy.
-- **Deployment.** Custom disk image via `bin/build-image` with `oberon/Agent.Mod` baked in and
-  `Agent.Run` auto-started at boot; a patched `Oberon.Mod` (adds `ResetKeep`, §5) for trap
-  survival. Boot `bin/risc` with `--serial-in/out` wired to the proxy's PTY (or two FIFOs).
+- **Deployment.** `bin/build-image` compiles only a fixed module list, so
+  `python/scripts/build_image.py` cross-compiles `Agent.Mod` via an unused leaf-module slot and
+  bakes the resulting `Agent.rsc` into the image (`--no-precompile` ships source only). Bring-up
+  is connect-mode: boot `bin/risc` with `--serial-in/out` on two FIFOs, run `Agent.Run` once in
+  the Oberon window, then attach the proxy as a client. (Auto-start at boot would need a patched
+  `Oberon.Mod` doing `Modules.Load("Agent")` — deferred, as is `ResetKeep` trap survival (§5);
+  v1 has no trap handler.)
 - **Safety.** Speculative execution on throwaway image copies; host supervisor (serial
   timeout → emulator reset) is the backstop for a hung or trapped server; `build-image` /
   Norebo is the clean-rebuild ground truth and rollback path; step/approve mode (§4.5) gates
@@ -345,6 +354,8 @@ in Phase 2), so the proxy takes a few thin deps rather than hand-rolling SSE + r
   native `anthropic` (prompt caching / fine-grained streaming) is a one-file change. `rich` —
   host console: streaming transcript, code/diff highlighting, step/approve prompts. Optional
   `python-dotenv` for the API key (else env vars; non-secret config via stdlib `tomllib`).
+  Providers in *thinking* mode (e.g. DeepSeek V4) stream a `reasoning_content` field that must
+  be echoed back in the assistant message each turn — `llm.py` captures and replays it.
 - *Tooling, `uv`-managed:* `uv` (project/deps), `ruff` (lint + format, replaces black), `ty`
   (types — Astral, still young; `pyright`/`mypy` the fallback), `pytest` (add `pytest-asyncio`
   only if the loop goes async).
@@ -459,10 +470,18 @@ This is how the §4.3 `compile` parser is specified against *real* text rather t
 
 ## 7. Verify method (does it actually work?)
 
+**Validated 2026-05-29** — live PO2013 image + proxy over a serial FIFO, driven by
+`deepseek-v4-pro`: the golden path (write → compile clean → `load_module` → `run_command`, log
+captured), a real authoring task, and **error-channel recovery** (a planted two-error module —
+the agent localized from `{msg, line, source_line, context}`, fixed both, and even backed out of
+its own wrong `COPY` guess via the follow-up `undef`, reaching a clean compile). ⇒ the terse
+`ORS` diagnostics are sufficient for LLM iteration; the approximate column never mattered. Still
+open: trap survival (§5) and the throwaway-image regression run.
+
 - **Golden-path smoke test:** PUT a small module → `compile` a deliberately-broken version →
   assert structured `diagnostics` (line exact, message present, `source_line` echoed) → fix →
   `compile` clean → `load_module` → `run_command` → read Log output.
-- **Error-channel sufficiency (the open empirical question):** drive a real fix-loop on the
+- **Error-channel sufficiency (answered — see above):** drive a real fix-loop on the
   §6 fixtures and confirm an LLM can localize from `{msg, line, source_line, context}` despite
   terse messages and approximate columns. If not, widen `context` or add a source-line caret
   at `col` — *do not* try to improve `ORS`'s messages.
