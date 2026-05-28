@@ -4,3 +4,5 @@ bin/
 book/
 # project oberon 2013 edition source code
 op2013-src/
+# local build folder
+build/
