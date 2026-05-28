@@ -1,0 +1,6 @@
+# oberon host tools
+bin/
+# project oberon book pdfs
+book/
+# project oberon 2013 edition source code
+op2013-src/
