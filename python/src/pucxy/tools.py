@@ -8,8 +8,7 @@ from __future__ import annotations
 import re
 from typing import Protocol
 
-from . import compile_log, wire
-from .compile_log import CompileResult
+from . import wire
 from .oberon_text import from_oberon, to_oberon
 from .toolspec import TOOL_NAMES
 
@@ -107,11 +106,11 @@ class AgentTools:
     # --- compile / run ---
 
     def compile(self, name: str, new_symbol: bool = False) -> dict:
+        # Returns the raw Oberon.Log delta; the model reads diagnostics / the success
+        # line directly (offset->line mapping proved unnecessary — see spec.md section 7).
         par = name + ("/s" if new_symbol else "")
         r = self.t.request(wire.build_call("ORP.Compile", to_oberon(par)))
-        log = from_oberon(r.payload)
-        source = self.read_file(name).get("content")
-        return _result_to_dict(compile_log.parse(log, source))
+        return {"output": from_oberon(r.payload)}
 
     def run_command(self, cmd: str, args: str = "") -> dict:
         r = self.t.request(wire.build_call(cmd, to_oberon(args)))
@@ -133,24 +132,3 @@ class AgentTools:
             return getattr(self, name)(**args)
         except TypeError as e:
             return {"error": f"bad arguments for {name}: {e}"}
-
-
-def _result_to_dict(r: CompileResult) -> dict:
-    diags = []
-    for d in r.diagnostics:
-        item: dict = {"msg": d.msg, "offset": d.offset}
-        if d.line is not None:
-            item["line"] = d.line
-            item["col"] = d.col
-            item["source_line"] = d.source_line
-            item["context"] = [{"line": ln, "text": tx} for ln, tx in d.context]
-        diags.append(item)
-    return {
-        "ok": r.ok,
-        "module": r.module,
-        "symbol_file": r.symbol_file,
-        "code_bytes": r.code_bytes,
-        "data_bytes": r.data_bytes,
-        "key": r.key,
-        "diagnostics": diags,
-    }

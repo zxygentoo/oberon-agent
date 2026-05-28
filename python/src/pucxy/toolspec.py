@@ -56,7 +56,9 @@ TOOLS = [
     ),
     _tool(
         "compile",
-        "Compile a module source file with ORP.Compile; returns structured diagnostics.",
+        "Compile a module source file with ORP.Compile. Returns the compiler's log as text: "
+        "either error lines ('pos <offset> <message>' then 'compilation FAILED') or a success "
+        "line ('compiling <Mod> [new symbol file] <codeBytes> <dataBytes> <key>').",
         {
             "name": {**_STR, "description": "Source file, e.g. 'Agent.Mod'."},
             "new_symbol": {

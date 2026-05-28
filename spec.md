@@ -30,7 +30,7 @@ Grounded in the PO2013 reference sources (`op2013-src/`) and the Rust emulator /
   (a `Texts.Text`) — capture the delta appended during the call.
 - **Errors are already text in the Log.** `ORS.Mark` writes `pos <N> <msg>` (N = char
   offset; max 25 errors). `System.Trap` writes `pos <N> TRAP<w> in <Mod> at <addr>`. The
-  proxy maps char-offset → line:col against the source.
+  proxy forwards this text to the model as-is — offset→line:col mapping proved unnecessary (§7).
 - **Source format.** Plain ASCII source compiles — `Texts.Open` switches on first byte
   `TextTag = 0F1X` (formatted) else the ASCII path. The agent writes plain text. Files
   written by Oberon (`Texts.Close`) get the 0F1X header → strip with `ob2unix`.
@@ -158,8 +158,8 @@ code disagrees with its own comment — these are the *code* values):
 
 > **Compile is special:** `ORP.Compile` is a normal command that only *logs* diagnostics, so
 > a source with errors still returns **`res = 0` → status 0**. The command ran; the errors
-> are in the payload. The proxy's `compile` tool decides pass/fail by **parsing the payload**
-> (§4.3), never by the wire status.
+> (or the success line) are in the payload, which `compile` returns as text for the model to
+> read — pass/fail is never the wire status (§4.3).
 
 **Log-delta capture (CALL).** `Oberon.Log` is a `Texts.Text`; `Texts.Append` always inserts
 at `Log.len`. So the dispatcher records `beg := Log.len` before `Oberon.Call`, then after the
@@ -184,18 +184,21 @@ to one generic verb is explicitly *not* a goal.
 | `edit_file` | `path, old, new` | `{ok, replaced}` / not_unique / not_found | GET fresh → str_replace (must be unique) → PUT | GET+PUT |
 | `delete_file` | `path` | `{ok}` / not_found | CALL `System.DeleteFiles`; parse Log (`… deleting`/` failed`) | CALL |
 | `list_files` | `[prefix]` | `{files:[{name,size,date}]}` | CALL `Agent.ListFiles`; parse Log lines | CALL |
-| `compile` | `name, [new_symbol]` | `{ok, diagnostics:[…], symbol_file, code_bytes, data_bytes, key}` | CALL `ORP.Compile <name>[/s]`; parse Log | CALL |
+| `compile` | `name, [new_symbol]` | `{output}` (raw compiler Log) | CALL `ORP.Compile <name>[/s]`; return Log text | CALL |
 | `load_module` | `name` | `{ok, res}` | CALL `Agent.Load`; parse Log/status | CALL |
 | `unload_module` | `name` | `{ok}` / in_use | CALL `System.Free`; parse Log (` failed` ⇒ refcnt≠0) | CALL |
 | `list_modules` | — | `{modules:[{name,refcnt,code_addr}]}` | CALL `Agent.ListModules`; parse Log | CALL |
 | `run_command` | `cmd, [args]` | `{ok, res, log}` / trapped | raw CALL (escape hatch) | CALL |
 
-**`compile` result — the one parser that earns its keep.** The proxy parses the CALL payload
-(the compile Log delta). Real output, captured via `build-image` (§6):
+**`compile` returns the raw Oberon Log; the model reads it.** No host-side parsing. We
+*validated* (§7) that the model recovers straight from the raw compiler output — it already
+holds the source it wrote/read, and the terse message names the construct — so the
+offset→line:col mapping we'd planned proved unnecessary and was dropped. Real output, captured
+via `build-image` (§6):
 
 ```
   compiling Stars            <- "  compiling <Mod>"
-  pos 59 undef               <- "  pos <N> <msg>"  (one per error, max 25)
+  pos 59 undef               <- "  pos <offset> <msg>"  (raw char offset; one per error, max 25)
   pos 69 illegal assignment
   pos 86 not Integer
 compilation FAILED           <- failure trailer
@@ -208,17 +211,10 @@ Success instead ends the `compiling` line with the code/data sizes and key (and
   compiling Stars new symbol file    45     8 C5386873
 ```
 
-Parser contract:
-- line `^  compiling (\w+)( new symbol file)?(\s+\d+\s+\d+\s+[0-9A-F]+)?` → module, `symbol_file`, and on success `code_bytes`/`data_bytes`/`key`.
-- line `^  pos (\d+) (.*)$` → one diagnostic; `compilation FAILED` (or any `pos` line) ⇒ `ok=false`.
-- `N` is a **byte offset** into the source. Map to `line:col` by counting line separators in
-  the exact bytes PUT (CR and LF are each one byte → the count is line-ending-agnostic;
-  validated in §6). Empirically the offset points **at or just past the offending token**
-  (often the line-terminating newline), so it reliably identifies the **line**; the **column
-  is approximate**. ⇒ each diagnostic returns `{line, col, msg, source_line, context}` where
-  `context` is ±2 surrounding lines, giving the LLM enough to localize. The messages are
-  terse (`undef`, `not Integer`, `illegal assignment`) but, with the source line, sufficient
-  for iteration — that is the empirical claim §6 exists to test.
+The messages are terse (`undef`, `not Integer`, `illegal assignment`) and `pos` is a raw char
+offset (which points at/just past the offending token), but with the source in context that is
+enough for the model to localize and fix — confirmed live (§7). Not stress-tested: very long
+files, or errors a precise position would disambiguate.
 
 **CALL parameter channel.** Before `Oberon.Call`, the dispatcher must point `Oberon.Par` at
 the received `par` bytes (commands read params via `Texts.OpenScanner(S, Oberon.Par.text,
@@ -427,7 +423,7 @@ small variation, not a true longjmp, but it **needs validation on the emulator**
 
 **We can elicit real compiler diagnostics today, with no emulator boot,** via `bin/build-image`
 — the shim routes Oberon's Log to host stdout, so a build surfaces verbatim `ORP`/`ORS` output.
-This is how the §4.3 `compile` parser is specified against *real* text rather than guesses.
+It documents the real Log format the model reads, and is how the §7 error-recovery test was set up.
 
 - **Compile-diagnostic fixtures (the headline check the spec was waiting on).** Recipe:
   copy `op2013-src/` → a scratch tree, overwrite one **leaf** module that has no dependents
@@ -435,8 +431,8 @@ This is how the §4.3 `compile` parser is specified against *real* text rather t
   deliberately broken body, run `build-image <scratch> /tmp/x.dsk`, capture stdout. Whole-image
   build ≈ 2 s. Caveats: build-image compiles a **fixed module list**, and `ORP.Compile` stops
   at the first module whose `errcnt ≠ 0`, so put the break in **one** early leaf module per
-  fixture. Save captured logs as fixtures; the proxy's parser unit-tests run against them
-  **without** the emulator.
+  fixture. (We no longer parse these host-side — `compile` returns the Log verbatim — but the
+  recipe still surfaces the real format and seeds error-recovery scenarios.)
 
   *Captured baseline (real output, do not hand-edit):*
   ```
@@ -453,9 +449,8 @@ This is how the §4.3 `compile` parser is specified against *real* text rather t
   `/s` forces a new symbol file (`ORP.Option` → `newSF`).
 
 - **Proxy unit tests (no emulator):** frame encode/decode incl. the `0A5H`/`05AH` sync and LE
-  ints; `edit_file` str_replace (unique-match + not-found + not-unique); compile-Log parsing
-  against the fixtures above; char-offset → line:col mapping (assert line is exact); CR↔LF and
-  `0F1H`-header strip round-trips. Pure Python, fast.
+  ints; `edit_file` str_replace (unique-match + not-found + not-unique); tool dispatch over a
+  fake device; CR↔LF and `0F1H`-header strip round-trips. Pure Python, fast.
 
 - **Oberon compile checks:** compile `oberon/Agent.Mod` and any patched system modules
   (`Oberon.Mod` with `ResetKeep`) via `build-image` as ground truth — a green image build is
@@ -473,18 +468,18 @@ This is how the §4.3 `compile` parser is specified against *real* text rather t
 **Validated 2026-05-29** — live PO2013 image + proxy over a serial FIFO, driven by
 `deepseek-v4-pro`: the golden path (write → compile clean → `load_module` → `run_command`, log
 captured), a real authoring task, and **error-channel recovery** (a planted two-error module —
-the agent localized from `{msg, line, source_line, context}`, fixed both, and even backed out of
-its own wrong `COPY` guess via the follow-up `undef`, reaching a clean compile). ⇒ the terse
-`ORS` diagnostics are sufficient for LLM iteration; the approximate column never mattered. Still
-open: trap survival (§5) and the throwaway-image regression run.
+the agent localized from the raw `pos <offset> <msg>` Log plus the source it holds, fixed both,
+and even backed out of its own wrong `COPY` guess via the follow-up `undef`, reaching a clean
+compile). ⇒ the terse `ORS` Log is sufficient for LLM iteration as-is — no host-side parsing or
+offset→line mapping needed (`compile_log` was removed). Still open: trap survival (§5), the
+throwaway-image regression, and recovery on very long / position-ambiguous errors.
 
 - **Golden-path smoke test:** PUT a small module → `compile` a deliberately-broken version →
-  assert structured `diagnostics` (line exact, message present, `source_line` echoed) → fix →
-  `compile` clean → `load_module` → `run_command` → read Log output.
-- **Error-channel sufficiency (answered — see above):** drive a real fix-loop on the
-  §6 fixtures and confirm an LLM can localize from `{msg, line, source_line, context}` despite
-  terse messages and approximate columns. If not, widen `context` or add a source-line caret
-  at `col` — *do not* try to improve `ORS`'s messages.
+  assert the compiler Log names the errors → fix → `compile` clean → `load_module` →
+  `run_command` → read Log output.
+- **Error-channel sufficiency (answered — see above):** the LLM localizes from the raw Log
+  plus the source it holds. If a long file or a position-ambiguous error ever defeats it,
+  reintroduce offset→line mapping (or a source-line caret) then — *do not* touch `ORS`'s messages.
 - **Trap survival (post-hardening):** load a module whose body traps; confirm the server
   **survives**, returns a `trapped` (status 2) result with the `TRAP w … at addr` text, and the
   system stays up; then confirm the half-loaded module can be cleaned up and reloaded.

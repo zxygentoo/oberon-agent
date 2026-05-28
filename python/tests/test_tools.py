@@ -58,17 +58,15 @@ def test_load_module():
     assert AgentTools(FakeTransport()).load_module("Foo")["ok"]
 
 
-def test_compile_parses_diagnostics():
+def test_compile_returns_raw_log():
     log = "  compiling M\n  pos 5 undef\ncompilation FAILED\n"
     t = FakeTransport(
         {"M.Mod": b"MODULE M;\rBEGIN x\rEND M.\r"},
         call=lambda cmd, par: (0, log.encode()) if cmd == "ORP.Compile" else None,
     )
     r = AgentTools(t).compile("M.Mod")
-    assert not r["ok"]
-    assert r["diagnostics"][0]["msg"] == "undef"
-    assert r["diagnostics"][0]["line"] == 1  # offset 5 falls in 'MODULE M;'
-    assert "MODULE M;" in r["diagnostics"][0]["source_line"]
+    assert "undef" in r["output"]
+    assert "compilation FAILED" in r["output"]
 
 
 def test_compile_new_symbol_passes_slash_s():
@@ -83,7 +81,7 @@ def test_compile_new_symbol_passes_slash_s():
     t = FakeTransport({"M.Mod": b"MODULE M;\rEND M.\r"}, call=call)
     r = AgentTools(t).compile("M.Mod", new_symbol=True)
     assert seen["par"] == "M.Mod/s"
-    assert r["ok"] and r["symbol_file"]
+    assert "new symbol file" in r["output"]
 
 
 def test_run_command_reports_status_and_log():
