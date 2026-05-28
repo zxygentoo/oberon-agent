@@ -8,7 +8,6 @@ its line discipline would mangle the binary protocol (echo, CR/NL translation).
 from __future__ import annotations
 
 import os
-import pty
 import select
 import tty
 
@@ -62,17 +61,6 @@ class Transport:
                 os.close(fd)
             except OSError:
                 pass
-
-
-def open_pty(timeout: float = 10.0) -> tuple[Transport, str]:
-    """Create a raw PTY. Returns (transport, slave_name) — pass slave_name to the
-    emulator as both --serial-in and --serial-out."""
-    master, slave = pty.openpty()
-    tty.setraw(slave)
-    tty.setraw(master)
-    slave_name = os.ttyname(slave)
-    # Keep the slave fd open so the master never sees EOF before the emulator attaches.
-    return Transport(master, master, owned=(master, slave), timeout=timeout), slave_name
 
 
 def open_path(path: str, timeout: float = 10.0) -> Transport:

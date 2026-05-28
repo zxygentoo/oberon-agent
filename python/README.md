@@ -59,9 +59,6 @@ often as you like (no reboot per task).
    `deepseek-v4-flash` is cheaper; both V4 models support tool calls.
    (`deepseek-chat`/`deepseek-reasoner` are deprecated aliases, retire 2026-07-24.)
 
-`--image IMG` is a convenience that spawns its own emulator on a private PTY — fine
-for an *interactive* session (`pucxy run --image …`, then `Agent.Run` in the window,
-then type at `puck>`). Don't pass a one-shot task with `--image`: the agent starts
-driving before the device has booted and `Agent.Run` has run, so it times out.
-Connect mode (above) avoids that.
+The proxy is a client — it never boots the emulator. Run `bin/risc` yourself (step 2)
+and the proxy attaches to its serial line.
 
