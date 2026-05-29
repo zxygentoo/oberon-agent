@@ -19,8 +19,8 @@ Working rules:
 - To put new code into effect: compile (use new_symbol=true when a module's \
 exported interface changed), then load_module. To replace a running module, \
 unload_module first (it fails while the module is still imported), then load_module.
-- compile returns structured diagnostics with line, message and source context. \
-Messages are terse (e.g. 'undef', 'not Integer'); use the source context to localize.
+- compile returns the compiler's raw log: error lines 'pos <offset> <msg>' then \
+'compilation FAILED', or a success line. You already have the source, so use the message to localize.
 - Prefer the named tools; use run_command only as an escape hatch.
 Be concise. Verify your work by compiling and running."""
 
