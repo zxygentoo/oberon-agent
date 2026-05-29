@@ -12,7 +12,8 @@ uv run pytest          # unit tests (no emulator needed)
 uv run pucxy --help
 ```
 
-Layout: `src/pucxy/` (package), `tests/` (unit tests), `scripts/` (deploy helper).
+Layout: `src/pucxy/` (package), `tests/` (unit tests). The image is built from the repo
+root with `make image` (see below).
 
 ## Bring-up (Phase 1)
 
@@ -20,16 +21,16 @@ The emulator is a long-lived GUI process; the proxy is a client that connects to
 serial line. Run them **separately** — boot once, run `Agent.Run` once, then drive as
 often as you like (no reboot per task).
 
-1. Build an image with `Agent` baked in (source **and** a precompiled `Agent.rsc`):
+1. Build an image with `Agent` compiled in — from the repo root:
 
    ```
-   uv run python scripts/build_image.py      # -> ../build/puck.dsk
+   make image                                # -> build/puck.dsk
    ```
 
-   `bin/build-image` only compiles a fixed module list, so the helper cross-compiles
-   `Agent.Mod` via a leaf-module slot and installs the resulting `Agent.rsc`/`.smb`.
-   Use `--no-precompile` to ship source only (then run `ORP.Compile Agent.Mod/s` on
-   the device before step 3).
+   `build-image` compiles every file in the source tree except those in its `.packonly`,
+   ordered by a topological sort of `IMPORT`s, so `oberon/Agent.Mod` is compiled and its
+   `Agent.rsc` baked into the image. (`make` assembles `op2013-src/` + `oberon/*.Mod` into
+   one tree.)
 
 2. Boot the emulator on two FIFOs (from the repo root) and start the server:
 

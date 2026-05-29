@@ -330,13 +330,13 @@ Three concurrent ways in, by design:
 - **Languages.** Oberon-07 on the device (in `oberon/`); **Python** proxy (in `python/`, a
   `uv` project; package `pucxy`). A future imaging/storage layer would be Rust or Zig, decided
   later, independent of the proxy.
-- **Deployment.** `bin/build-image` compiles only a fixed module list, so
-  `python/scripts/build_image.py` cross-compiles `Agent.Mod` via an unused leaf-module slot and
-  bakes the resulting `Agent.rsc` into the image (`--no-precompile` ships source only). Bring-up
-  is connect-mode: boot `bin/risc` with `--serial-in/out` on two FIFOs, run `Agent.Run` once in
-  the Oberon window, then attach the proxy as a client. (Auto-start at boot would need a patched
-  `Oberon.Mod` doing `Modules.Load("Agent")` — deferred, as is `ResetKeep` trap survival (§5);
-  v1 has no trap handler.)
+- **Deployment.** `build-image` compiles every file in the source tree except those its
+  `.packonly` lists, ordered by a topological sort of `IMPORT`s — so the top-level `make image`
+  (which assembles `op2013-src/` + `oberon/*.Mod`) compiles `Agent.Mod` and bakes `Agent.rsc`
+  into the image. Bring-up is connect-mode: boot `bin/risc` with `--serial-in/out` on two FIFOs,
+  run `Agent.Run` once in the Oberon window, then attach the proxy as a client. (Auto-start at
+  boot would need a patched `Oberon.Mod` doing `Modules.Load("Agent")` — deferred, as is
+  `ResetKeep` trap survival (§5); v1 has no trap handler.)
 - **Safety.** Speculative execution on throwaway image copies; host supervisor (serial
   timeout → emulator reset) is the backstop for a hung or trapped server; `build-image` /
   Norebo is the clean-rebuild ground truth and rollback path; step/approve mode (§4.5) gates
@@ -425,14 +425,11 @@ small variation, not a true longjmp, but it **needs validation on the emulator**
 — the shim routes Oberon's Log to host stdout, so a build surfaces verbatim `ORP`/`ORS` output.
 It documents the real Log format the model reads, and is how the §7 error-recovery test was set up.
 
-- **Compile-diagnostic fixtures (the headline check the spec was waiting on).** Recipe:
-  copy `op2013-src/` → a scratch tree, overwrite one **leaf** module that has no dependents
-  in build-image's fixed list (`Stars`, `Hilbert`, `Sierpinski`, `Blink`, `Checkers`) with a
-  deliberately broken body, run `build-image <scratch> /tmp/x.dsk`, capture stdout. Whole-image
-  build ≈ 2 s. Caveats: build-image compiles a **fixed module list**, and `ORP.Compile` stops
-  at the first module whose `errcnt ≠ 0`, so put the break in **one** early leaf module per
-  fixture. (We no longer parse these host-side — `compile` returns the Log verbatim — but the
-  recipe still surfaces the real format and seeds error-recovery scenarios.)
+- **Compile-diagnostic fixtures.** Recipe: drop a deliberately broken module into the source
+  tree (or break an existing one) and run `build-image` — it compiles every non-`.packonly`
+  file (topologically ordered) and prints the real `ORS` diagnostics to stdout. Whole-image
+  build ≈ 2 s. (We no longer parse these host-side — `compile` returns the Log verbatim — but
+  the recipe still surfaces the real format and seeds error-recovery scenarios.)
 
   *Captured baseline (real output, do not hand-edit):*
   ```
