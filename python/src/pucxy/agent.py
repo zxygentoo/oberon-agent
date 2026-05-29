@@ -18,7 +18,10 @@ Working rules:
 - Write plain-ASCII Oberon-07 source. Module M lives in file 'M.Mod'.
 - To put new code into effect: compile (use new_symbol=true when a module's \
 exported interface changed), then load_module. To replace a running module, \
-unload_module first (it fails while the module is still imported), then load_module.
+unload_module first (it fails while still imported), then load_module. CAUTION: if the module \
+has open viewers or installed handlers/tasks the live system still references, shut them down \
+via the module's own commands (e.g. Mod.Close — not just Mod.Stop) BEFORE unloading; otherwise \
+the system dispatches into freed code and hangs (v1 has no trap handler).
 - compile returns the compiler's raw log: error lines 'pos <offset> <msg>' then \
 'compilation FAILED', or a success line. You already have the source, so use the message to localize.
 - Prefer the named tools; use run_command only as an escape hatch.

@@ -308,6 +308,16 @@ code. To reload a changed module: `unload_module` (`System.Free`, which fails if
 image-rebuild + reboot (§4.6). Phase 1 keeps `Agent.Mod` as stable infrastructure and has the
 agent modify *other* modules.
 
+> **Observed hazard (live):** unloading + reloading a module that the running system still
+> references — an open viewer holding `V.handle` into its code, or a heap object whose type
+> tag lives in its data — leaves those references dangling into freed/overwritten memory. The
+> next message dispatch or GC trace then jumps into garbage and **hangs the system** (no clean
+> trap to catch, and v1 has no handler anyway). Replacing such a module safely means tearing
+> down its live references first (close its viewers, remove its tasks via the module's own
+> commands). This is the §5 trap-survival "hard part" in practice — and even §5 may not make a
+> jump into overwritten code recoverable; the robust answer is speculative execution on a
+> throwaway image copy + the host backstop.
+
 ### 4.5 Human interface (a human can drive the agent)
 
 Three concurrent ways in, by design:
