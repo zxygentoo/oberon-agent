@@ -317,6 +317,14 @@ agent modify *other* modules.
 > commands). This is the §5 trap-survival "hard part" in practice — and even §5 may not make a
 > jump into overwritten code recoverable; the robust answer is speculative execution on a
 > throwaway image copy + the host backstop.
+>
+> **And the tear-down isn't reachable headlessly:** stock `Close`/`System.Close` act only when
+> invoked from the viewer's own menu (they test `Oberon.Par.vwr.dsc = Oberon.Par.frame`), so a
+> `CALL` carrying the dummy frame (§4.3) silently no-ops — the viewer stays open and the reload
+> still hangs (observed: `Stars.Close` had no effect, then reload branched into the void). Until
+> an `Agent`-side helper can close a module's viewers directly (find viewers whose `handle`
+> falls in the module's code range; `Viewers.Close` them), viewer-owning modules can only be
+> replaced by edit + recompile + **reboot** (the new object loads on next use).
 
 ### 4.5 Human interface (a human can drive the agent)
 
