@@ -35,10 +35,10 @@ class AgentConsole:
         if isinstance(result, dict) and "error" in result:
             self.c.print(f"  [red]error[/] {_short(result)}")
             return
-        # Show the human-readable payload (file content / compiler log / command output)
-        # verbatim: real newlines, no truncation, markup off (it may contain '[').
         if isinstance(result, dict):
-            for key in ("content", "output", "log"):
+            # compiler log / command output: small and the actual result — show verbatim
+            # (real newlines, no truncation, markup off since it may contain '[').
+            for key in ("output", "log"):
                 body = result.get(key)
                 if isinstance(body, str):
                     self.c.print("  [green]ok[/]")
@@ -47,6 +47,13 @@ class AgentConsole:
                     if rest:
                         self.c.print(f"  [dim]{_short(rest, limit=2000)}[/]")
                     return
+            # file content: just a summary — reads are usually for the agent's own
+            # reference; it prints the content itself when the operator asks to see it.
+            body = result.get("content")
+            if isinstance(body, str):
+                lines = body.count("\n") + 1
+                self.c.print(f"  [green]ok[/] [dim]read {len(body)} bytes, {lines} lines[/]")
+                return
         self.c.print(f"  [green]ok[/] [dim]{_short(result, limit=2000)}[/]")
 
     def confirm(self, name: str, args: dict, destructive: bool = False) -> bool:

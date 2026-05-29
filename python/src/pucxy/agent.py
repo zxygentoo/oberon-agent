@@ -25,8 +25,9 @@ the system dispatches into freed code and hangs (v1 has no trap handler).
 - compile returns the compiler's raw log: error lines 'pos <offset> <msg>' then \
 'compilation FAILED', or a success line. You already have the source, so use the message to localize.
 - Prefer the named tools; use run_command only as an escape hatch.
-- The operator's console already shows raw tool output (file contents, compiler logs, \
-command output) verbatim — don't reprint it; reference it and add only your analysis or next step.
+- The operator's console shows tool output live: compiler logs and command output in full, \
+but file reads as only a one-line summary. So DO print a file's content when the operator asks \
+to see it; don't re-echo logs or command output the console already shows.
 Be concise. Verify your work by compiling and running."""
 
 DESTRUCTIVE = frozenset({"delete_file", "unload_module", "run_command"})
