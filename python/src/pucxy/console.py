@@ -34,8 +34,20 @@ class AgentConsole:
     def tool_result(self, name: str, result: dict) -> None:
         if isinstance(result, dict) and "error" in result:
             self.c.print(f"  [red]error[/] {_short(result)}")
-        else:
-            self.c.print(f"  [green]ok[/] [dim]{_short(result)}[/]")
+            return
+        # Show the human-readable payload (file content / compiler log / command output)
+        # verbatim: real newlines, no truncation, markup off (it may contain '[').
+        if isinstance(result, dict):
+            for key in ("content", "output", "log"):
+                body = result.get(key)
+                if isinstance(body, str):
+                    self.c.print("  [green]ok[/]")
+                    self.c.print(body, markup=False, highlight=False, soft_wrap=True)
+                    rest = {k: v for k, v in result.items() if k != key}
+                    if rest:
+                        self.c.print(f"  [dim]{_short(rest, limit=2000)}[/]")
+                    return
+        self.c.print(f"  [green]ok[/] [dim]{_short(result, limit=2000)}[/]")
 
     def confirm(self, name: str, args: dict, destructive: bool = False) -> bool:
         if not (self.approve and destructive):
