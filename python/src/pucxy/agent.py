@@ -22,6 +22,8 @@ unload_module first (it fails while the module is still imported), then load_mod
 - compile returns the compiler's raw log: error lines 'pos <offset> <msg>' then \
 'compilation FAILED', or a success line. You already have the source, so use the message to localize.
 - Prefer the named tools; use run_command only as an escape hatch.
+- The operator's console already shows raw tool output (file contents, compiler logs, \
+command output) verbatim — don't reprint it; reference it and add only your analysis or next step.
 Be concise. Verify your work by compiling and running."""
 
 DESTRUCTIVE = frozenset({"delete_file", "unload_module", "run_command"})
