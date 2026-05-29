@@ -2,11 +2,11 @@
 #
 # build-image compiles every file in the source tree except those listed in the
 # tree's .packonly, ordering them by a topological sort of their IMPORTs. So we
-# just assemble op2013-src/ (which carries .packonly) + oberon/*.Mod into one
+# just assemble po2013/ (which carries .packonly) + oberon/*.Mod into one
 # tree and hand it over; Agent.Mod is compiled and Agent.rsc baked into the image.
 
 BUILD_IMAGE ?= ./bin/build-image
-REF         ?= op2013-src
+REF         ?= po2013
 IMAGE       ?= build/puck.dsk
 
 .PHONY: image clean

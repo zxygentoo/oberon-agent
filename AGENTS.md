@@ -22,6 +22,6 @@ authoritative design, research findings, and locked decisions.
 
 - Oberon side: Oberon-07 (as in PO2013), sources in `oberon/`. Host proxy: Python, in `python/`
   (a `uv` project; package `pucxy`).
-- Reference material (gitignored, local): PO2013 source in `op2013-src/`, the book in
+- Reference material (gitignored, local): PO2013 source in `po2013/`, the book in
   `book/`, the built emulator + tools in `bin/` (`risc`, `build-image`).
 - *(more as they emerge)*

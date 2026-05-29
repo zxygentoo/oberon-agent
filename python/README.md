@@ -29,7 +29,7 @@ often as you like (no reboot per task).
 
    `build-image` compiles every file in the source tree except those in its `.packonly`,
    ordered by a topological sort of `IMPORT`s, so `oberon/Agent.Mod` is compiled and its
-   `Agent.rsc` baked into the image. (`make` assembles `op2013-src/` + `oberon/*.Mod` into
+   `Agent.rsc` baked into the image. (`make` assembles `po2013/` + `oberon/*.Mod` into
    one tree.)
 
 2. Boot the emulator on two FIFOs (from the repo root) and start the server:

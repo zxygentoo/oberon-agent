@@ -14,7 +14,7 @@ property.
 
 ## 2. Key research findings
 
-Grounded in the PO2013 reference sources (`op2013-src/`) and the Rust emulator / host tools
+Grounded in the PO2013 reference sources (`po2013/`) and the Rust emulator / host tools
 (`../oberon-risc-emu-rs`, built into `bin/`).
 
 - **Channel.** The emulator does not emulate the network, so the **serial line is the only
@@ -74,7 +74,7 @@ self-modifying.
 - *Agent API (proxy ↔ LLM):* rich, explicit, named tools with structured results.
 
 Everything below is grounded in the PO2013 sources and validated against `bin/build-image`
-(see §6). Source line:col references are to `op2013-src/`.
+(see §6). Source line:col references are to `po2013/`.
 
 ### 4.1 Serial byte layer (Oberon ↔ host)
 
@@ -350,7 +350,7 @@ Three concurrent ways in, by design:
   later, independent of the proxy.
 - **Deployment.** `build-image` compiles every file in the source tree except those its
   `.packonly` lists, ordered by a topological sort of `IMPORT`s — so the top-level `make image`
-  (which assembles `op2013-src/` + `oberon/*.Mod`) compiles `Agent.Mod` and bakes `Agent.rsc`
+  (which assembles `po2013/` + `oberon/*.Mod`) compiles `Agent.Mod` and bakes `Agent.rsc`
   into the image. Bring-up is connect-mode: boot `bin/risc` with `--serial-in/out` on two FIFOs,
   run `Agent.Run` once in the Oberon window, then attach the proxy as a client. (Auto-start at
   boot would need a patched `Oberon.Mod` doing `Modules.Load("Agent")` — deferred, as is

@@ -26,13 +26,13 @@ Phase 2 (stretch) moves it into Oberon.
 - `python/` — the Python host proxy: its own `uv` project (`src/pucxy/`, `tests/`, `pyproject.toml`).
 - `README.md`, `AGENTS.md` — committed docs (`CLAUDE.md` symlinks to `AGENTS.md`).
 - `spec.md` — the authoritative design doc (research findings, decisions, phasing).
-- `op2013-src/` — Project Oberon 2013 reference source (gitignored).
+- `po2013/` — Project Oberon 2013 reference source (gitignored).
 - `book/` — Project Oberon book PDFs (gitignored).
 - `bin/` — built tools: the `risc` emulator and `build-image` (gitignored).
 
 ## Dependencies / context
 
-- **PO2013 reference** — `op2013-src/` (ORP/ORG/ORB/ORS compiler, Modules, Files, Texts,
+- **PO2013 reference** — `po2013/` (ORP/ORG/ORB/ORS compiler, Modules, Files, Texts,
   PCLink1, RS232, …) and `book/` (the Project Oberon book: PO.System, PO.Computer,
   PO.Applications, Oberon07.Report, UsingOberon, PIO).
 - **Emulator & tools** — `bin/risc` (the RISC5 emulator) and `bin/build-image` (headless
@@ -40,7 +40,7 @@ Phase 2 (stretch) moves it into Oberon.
   serial via `--serial-in`/`--serial-out` (Unix); `--mem` for RAM. The wireless network is
   not emulated.
 
-> `op2013-src/`, `book/`, and `bin/` are reference / vendored / built material — gitignored
+> `po2013/`, `book/`, and `bin/` are reference / vendored / built material — gitignored
 > and populated locally.
 
 ## License
