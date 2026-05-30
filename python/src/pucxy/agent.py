@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import json
 
+from .llm import LLMError
+
 DEFAULT_SYSTEM = """\
 You are puck, a coding agent operating inside a LIVE Extended Oberon system through a set of \
 tools. The system runs Oberon-2 (2020 Edition) — a superset of Oberon-07 that adds type-bound \
@@ -58,16 +60,25 @@ class Agent:
         self.messages: list[dict] = [{"role": "system", "content": system_prompt}]
 
     def run(self, task: str) -> str | None:
+        before = len(self.messages)
         self.messages.append({"role": "user", "content": task})
-        for _ in range(self.max_steps):
-            msg = self.llm.respond(self.messages, on_text=self.console.stream_text)
+        try:
+            for _ in range(self.max_steps):
+                msg = self.llm.respond(self.messages, on_text=self.console.stream_text)
+                self.console.end_text()
+                self.messages.append(msg)
+                tool_calls = msg.get("tool_calls")
+                if not tool_calls:
+                    return msg.get("content")
+                for tc in tool_calls:
+                    self.messages.append(self._run_tool(tc))
+        except LLMError as e:
+            # Roll the conversation back to before this turn so the REPL stays usable and
+            # the next user input doesn't sit next to an orphaned user/tool pair.
             self.console.end_text()
-            self.messages.append(msg)
-            tool_calls = msg.get("tool_calls")
-            if not tool_calls:
-                return msg.get("content")
-            for tc in tool_calls:
-                self.messages.append(self._run_tool(tc))
+            self.console.error(f"LLM error: {e}")
+            del self.messages[before:]
+            return None
         self.console.error("reached max steps")
         return None
 
