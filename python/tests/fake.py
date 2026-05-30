@@ -15,7 +15,7 @@ class FakeTransport:
         self.modules: set[str] = {"System", "Oberon", "Agent"}
         self._call = call
 
-    def request(self, frame: bytes) -> wire.Response:
+    def __call__(self, frame: bytes) -> wire.Response:
         assert frame[0] == wire.SYNC_REQ, "bad request sync"
         op = frame[1]
         i = 2
@@ -70,6 +70,3 @@ class FakeTransport:
             lines = [f"{m}\t0\t 00001000" for m in sorted(self.modules)]
             return wire.ST_OK, ("\n".join(lines) + "\n").encode()
         return wire.ST_OK, b""
-
-    def close(self) -> None:
-        pass

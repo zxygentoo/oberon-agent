@@ -12,20 +12,21 @@ import argparse
 import json
 import os
 import sys
+from functools import partial
 
 from . import tools
+from . import transport as tp
 from .agent import Agent, make_agent
 from .agent import run as run_agent
 from .console import AgentConsole
 from .llm import make_llm
-from .transport import Transport, TransportTimeout, open_fifos, open_path
 
 
 def main(argv: list[str] | None = None) -> int:
     args = _parse_args(argv)
     try:
         return _cmd_tool(args) if args.cmd == "tool" else _cmd_run(args)
-    except TransportTimeout as e:
+    except tp.TransportTimeout as e:
         print(f"\nserial timeout: {e}", file=sys.stderr)
         print(
             "The device didn't respond. Is the emulator running, and has 'Agent.Run' "
@@ -68,21 +69,21 @@ def _add_conn(sp: argparse.ArgumentParser) -> None:
 
 
 def _cmd_tool(args: argparse.Namespace) -> int:
-    transport = _connect(args)
+    t = _connect(args)
     try:
-        result = tools.dispatch(transport, args.name, json.loads(args.json_args))
+        result = tools.dispatch(partial(tp.request, t), args.name, json.loads(args.json_args))
         print(json.dumps(result, indent=2, ensure_ascii=False))
         return 1 if "error" in result else 0
     finally:
-        transport.close()
+        tp.close(t)
 
 
 def _cmd_run(args: argparse.Namespace) -> int:
-    transport = _connect(args)
+    t = _connect(args)
     console = AgentConsole(approve=args.approve, log_path=args.log)
     try:
         llm = make_llm(args.model, base_url=args.base_url, api_key=args.api_key)
-        agent = make_agent(transport, llm, console)
+        agent = make_agent(partial(tp.request, t), llm, console)
         if args.task:
             console.user_prompt(args.task)
             run_agent(agent, args.task)
@@ -91,7 +92,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
         return 0
     finally:
         console.close()
-        transport.close()
+        tp.close(t)
 
 
 def _repl(agent: Agent, console: AgentConsole) -> None:
@@ -109,11 +110,11 @@ def _repl(agent: Agent, console: AgentConsole) -> None:
             run_agent(agent, line)
 
 
-def _connect(args: argparse.Namespace) -> Transport:
+def _connect(args: argparse.Namespace) -> tp.Transport:
     if args.serial:
-        return open_path(args.serial, timeout=args.timeout)
+        return tp.open_path(args.serial, timeout=args.timeout)
     if args.serial_in and args.serial_out:
-        return open_fifos(args.serial_in, args.serial_out, timeout=args.timeout)
+        return tp.open_fifos(args.serial_in, args.serial_out, timeout=args.timeout)
     raise SystemExit("connect: pass --serial, or --serial-in and --serial-out")
 
 

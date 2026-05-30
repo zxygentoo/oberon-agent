@@ -1,27 +1,25 @@
 """Agent tools implemented on the three wire ops. See spec.md section 4.3.
 
 Each function returns a JSON-serializable dict (the tool result the LLM sees).
-A Device is anything that answers a wire request — Transport or a test fake.
+A Device is anything that turns a wire request frame into a wire response —
+a transport bound via `partial(transport.request, t)` or a test fake.
 """
 
 import re
-from typing import Protocol
+from collections.abc import Callable
+from typing import TypeAlias
 
 from . import wire
 from .text import from_oberon, to_oberon
 
-
-class Device(Protocol):
-    """Anything that answers a wire request."""
-
-    def request(self, frame: bytes) -> wire.Response: ...
+Device: TypeAlias = Callable[[bytes], wire.Response]
 
 
 # --- files ---
 
 
 def read_file(t: Device, path: str) -> dict:
-    r = t.request(wire.build_get(path))
+    r = t(wire.build_get(path))
     if r.status == wire.ST_NOT_FOUND:
         return {"error": "not_found", "path": path}
     if not r.ok:
@@ -30,7 +28,7 @@ def read_file(t: Device, path: str) -> dict:
 
 
 def write_file(t: Device, path: str, content: str) -> dict:
-    r = t.request(wire.build_put(path, to_oberon(content)))
+    r = t(wire.build_put(path, to_oberon(content)))
     if not r.ok:
         return {"error": wire.STATUS_NAMES.get(r.status, "error")}
     return {"ok": True, "path": path, "bytes": len(content)}
@@ -117,12 +115,12 @@ def compile_module(t: Device, name: str, new_symbol: bool = False) -> dict:
     # Returns the raw Oberon.Log delta; the model reads diagnostics / the success
     # line directly (offset->line mapping proved unnecessary — see spec.md section 7).
     par = name + ("/s" if new_symbol else "")
-    r = t.request(wire.build_call("ORP.Compile", to_oberon(par)))
+    r = t(wire.build_call("ORP.Compile", to_oberon(par)))
     return {"output": from_oberon(r.payload)}
 
 
 def run_command(t: Device, cmd: str, args: str = "") -> dict:
-    r = t.request(wire.build_call(cmd, to_oberon(args)))
+    r = t(wire.build_call(cmd, to_oberon(args)))
     return {
         "status": wire.STATUS_NAMES.get(r.status, str(r.status)),
         "ok": r.ok,
@@ -161,7 +159,7 @@ def dispatch(t: Device, name: str, args: dict) -> dict:
 
 
 def _call_log(t: Device, cmd: str, args: str) -> str:
-    return from_oberon(t.request(wire.build_call(cmd, to_oberon(args))).payload)
+    return from_oberon(t(wire.build_call(cmd, to_oberon(args))).payload)
 
 
 def _split_tabular(text: str) -> list[list[str]]:

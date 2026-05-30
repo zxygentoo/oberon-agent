@@ -8,6 +8,7 @@ its line discipline would mangle the binary protocol (echo, CR/NL translation).
 import os
 import select
 import tty
+from dataclasses import dataclass
 
 from .wire import Response, read_response
 
@@ -20,31 +21,21 @@ class TransportTimeout(TransportError):
     pass
 
 
+@dataclass(frozen=True)
 class Transport:
     """An open serial line. Owns the file descriptors it was told to own."""
 
-    def __init__(
-        self, read_fd: int, write_fd: int, owned: tuple[int, ...] = (), timeout: float = 10.0
-    ):
-        self.rfd = read_fd
-        self.wfd = write_fd
-        self.owned = frozenset(owned) or frozenset({read_fd, write_fd})
-        self.timeout = timeout
-
-    def request(self, frame: bytes) -> Response:
-        send_all(self.wfd, frame)
-        return read_response(lambda n: recv_exactly(self.rfd, n, self.timeout))
-
-    def close(self) -> None:
-        for fd in self.owned:
-            close_quiet(fd)
+    rfd: int
+    wfd: int
+    owned: frozenset[int]
+    timeout: float = 10.0
 
 
 def open_path(path: str, timeout: float = 10.0) -> Transport:
     """Connect to an existing serial device / PTY slave (emulator started elsewhere)."""
     fd = os.open(path, os.O_RDWR | os.O_NOCTTY)
     tty.setraw(fd)
-    return Transport(fd, fd, owned=(fd,), timeout=timeout)
+    return Transport(rfd=fd, wfd=fd, owned=frozenset({fd}), timeout=timeout)
 
 
 def open_fifos(serial_in: str, serial_out: str, timeout: float = 10.0) -> Transport:
@@ -52,7 +43,19 @@ def open_fifos(serial_in: str, serial_out: str, timeout: float = 10.0) -> Transp
     `serial_out` is its --serial-out (we read it). O_RDWR avoids open-blocking."""
     wfd = os.open(serial_in, os.O_RDWR)
     rfd = os.open(serial_out, os.O_RDWR)
-    return Transport(rfd, wfd, owned=(rfd, wfd), timeout=timeout)
+    return Transport(rfd=rfd, wfd=wfd, owned=frozenset({rfd, wfd}), timeout=timeout)
+
+
+def request(t: Transport, frame: bytes) -> Response:
+    """Send a request frame, read one response frame."""
+    send_all(t.wfd, frame)
+    return read_response(lambda n: recv_exactly(t.rfd, n, t.timeout))
+
+
+def close(t: Transport) -> None:
+    """Best-effort close of every owned fd; never raises."""
+    for fd in t.owned:
+        close_quiet(fd)
 
 
 def send_all(fd: int, data: bytes) -> None:
