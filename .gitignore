@@ -8,3 +8,5 @@ po2013/
 eo/
 # local build folder
 build/
+# session logs (emulator + pucxy)
+log/

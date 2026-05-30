@@ -51,6 +51,7 @@ def main(argv: list[str] | None = None) -> int:
         "--api-key", default=None, help="LLM API key (else $PUCXY_API_KEY or $OPENAI_API_KEY)"
     )
     run.add_argument("--approve", action="store_true", help="confirm destructive tool calls")
+    run.add_argument("--log", help="append a plain-text transcript of this session to FILE")
     run.add_argument("task", nargs="?", help="task prompt; omit for an interactive session")
 
     tool = sub.add_parser("tool", help="invoke one tool directly (no LLM)")
@@ -88,7 +89,7 @@ def _cmd_run(args: argparse.Namespace) -> int:
     from .llm import LLMClient
 
     transport = _connect(args)
-    console = AgentConsole(approve=args.approve)
+    console = AgentConsole(approve=args.approve, log_path=args.log)
     try:
         agent = Agent(
             AgentTools(transport),
@@ -96,11 +97,13 @@ def _cmd_run(args: argparse.Namespace) -> int:
             console,
         )
         if args.task:
+            console.user_prompt(args.task)
             agent.run(args.task)
         else:
             _repl(agent, console)
         return 0
     finally:
+        console.close()
         transport.close()
 
 
@@ -115,6 +118,7 @@ def _repl(agent: "Agent", console: AgentConsole) -> None:
         if line in ("exit", "quit"):
             return
         if line:
+            console.user_prompt(line)
             agent.run(line)
 
 

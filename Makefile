@@ -21,11 +21,18 @@ clean:
 	rm -rf build
 
 oberon:
-	./bin/risc --serial-in /tmp/p.in --serial-out /tmp/p.out build/puck.dsk
+	@mkdir -p log
+	@TS=$$(date +%Y%m%d-%H%M%S); LOG=log/oberon-$$TS.log; \
+	echo "logging to $$LOG"; \
+	./bin/risc --serial-in /tmp/p.in --serial-out /tmp/p.out build/puck.dsk 2>&1 | tee "$$LOG"
 
 agent:
+	@mkdir -p log
+	@TS=$$(date +%Y%m%d-%H%M%S); ROOT=$$(pwd); LOG=$$ROOT/log/agent-$$TS.log; \
+	echo "logging to $$LOG"; \
 	cd python && rlwrap uv run pucxy run \
 		--serial-in /tmp/p.in --serial-out /tmp/p.out \
-		--base-url https://api.deepseek.com --model deepseek-v4-pro
+		--base-url https://api.deepseek.com --model deepseek-v4-pro \
+		--log "$$LOG"
 
 .PHONY: image clean oberon agent
