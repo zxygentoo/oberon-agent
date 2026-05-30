@@ -8,7 +8,7 @@ import re
 from typing import Protocol
 
 from . import wire
-from .oberon_text import from_oberon, to_oberon
+from .text import from_oberon, to_oberon
 
 
 class Device(Protocol):

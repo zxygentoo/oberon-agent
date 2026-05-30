@@ -1,6 +1,6 @@
 import struct
 
-from pucxy.oberon_text import TEXT_TAG, from_oberon, to_oberon
+from pucxy.text import TEXT_TAG, from_oberon, to_oberon
 
 
 def test_lf_to_cr():
