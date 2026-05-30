@@ -58,6 +58,18 @@ def test_load_module():
     assert AgentTools(FakeTransport()).load_module("Foo")["ok"]
 
 
+def test_unload_module_hides_via_system_free_f():
+    calls = []
+
+    def call(cmd, par):
+        calls.append((cmd, par.decode("latin1").replace("\r", "\n").strip()))
+        return (0, b"System.Free\n removing from module list\n")
+
+    r = AgentTools(FakeTransport(call=call)).unload_module("Stars")
+    assert r["ok"] and r["module"] == "Stars"
+    assert calls == [("System.Free", "Stars /f")]
+
+
 def test_compile_returns_raw_log():
     log = "  compiling M\n  pos 5 undef\ncompilation FAILED\n"
     t = FakeTransport(

@@ -256,7 +256,7 @@ host (proxy). `Agent.Mod` is a request/response server. (Phase-2 on-device state
 
 | command | role |
 |---|---|
-| `Agent.Run*` | `Oberon.Install(T)` the dispatcher; install the trap handler (§5). Auto-run at boot. |
+| `Agent.Run*` | `Oberon.Install(T)` the dispatcher. Called from `Agent`'s module body, so it auto-starts when boot loads `Agent`. |
 | `Agent.Stop*` | `Oberon.Remove(T)`. |
 | `Agent.ListFiles*` | `FileDir.Enumerate(prefix, h)`; handler writes `name⟨tab⟩size⟨tab⟩date` per line to Log. |
 | `Agent.ListModules*` | walk `Modules.root`, skip holes (`name[0]=0X`), write `name⟨tab⟩refcnt⟨tab⟩codeAdr`. |
@@ -352,9 +352,10 @@ Three concurrent ways in, by design:
   `.packonly` lists, ordered by a topological sort of `IMPORT`s — so the top-level `make image`
   (which assembles `po2013/` + `oberon/*.Mod`) compiles `Agent.Mod` and bakes `Agent.rsc`
   into the image. Bring-up is connect-mode: boot `bin/risc` with `--serial-in/out` on two FIFOs,
-  run `Agent.Run` once in the Oberon window, then attach the proxy as a client. (Auto-start at
-  boot would need a patched `Oberon.Mod` doing `Modules.Load("Agent")` — deferred, as is
-  `ResetKeep` trap survival (§5); v1 has no trap handler.)
+  then attach the proxy as a client. **Agent auto-starts at boot** — the patched `Oberon.Mod`
+  loads `Agent` after `System` (`Modules.Load("Agent", …)`), and `Agent`'s module body calls
+  `Run` to install the server task, so no manual step is needed (verified live). (`ResetKeep`
+  trap survival (§5) is still deferred; v1 has no trap handler.)
 - **Safety.** Speculative execution on throwaway image copies; host supervisor (serial
   timeout → emulator reset) is the backstop for a hung or trapped server; `build-image` /
   Norebo is the clean-rebuild ground truth and rollback path; step/approve mode (§4.5) gates

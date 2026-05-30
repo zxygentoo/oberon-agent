@@ -55,8 +55,13 @@ class FakeTransport:
                 return wire.ST_OK, f"System.DeleteFiles\n{arg} deleting\n".encode()
             return wire.ST_OK, f"System.DeleteFiles\n{arg} deleting failed\n".encode()
         if cmd == "System.Free":
-            self.modules.discard(arg)
-            return wire.ST_OK, f"System.Free\n{arg} unloading\n".encode()
+            # EO syntax: one or more module names, then an optional "/f" tail.
+            parts = [p for p in arg.split() if p != "/f"]
+            if parts:
+                self.modules.discard(parts[0])
+                action = "removing from module list" if "/f" in arg else "unloading"
+                return wire.ST_OK, f"System.Free\n{parts[0]} {action}\n".encode()
+            return wire.ST_OK, b"System.Free\n"
         if cmd == "Agent.Load":
             self.modules.add(arg)
             return wire.ST_OK, f"loaded {arg}\n".encode()

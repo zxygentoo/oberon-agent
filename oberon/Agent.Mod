@@ -1,5 +1,5 @@
-MODULE Agent;  (*puck serial agent server (Phase 1, v1 - no trap handler). See spec section 4.4.*)
-  IMPORT SYSTEM, Kernel, FileDir, Files, Modules, Display, Texts, Oberon;
+MODULE Agent;  (*puck serial agent server -- Extended Oberon target. See spec section 4.4.*)
+  IMPORT SYSTEM, Disk, FileDir, Files, Modules, Display, Texts, Oberon;
 
   CONST
     data = -56; stat = -52;            (*RS232 MMIO; status bit0 = rx, bit1 = tx*)
@@ -9,11 +9,12 @@ MODULE Agent;  (*puck serial agent server (Phase 1, v1 - no trap handler). See s
 
   VAR
     T: Oberon.Task;
-    W, PW: Texts.Writer;               (*W: helper/Log output;  PW: builds CALL par-text*)
+    W, PW: Texts.Writer;               (*W: Log/output writer;  PW: builds CALL par-text*)
     par: Texts.Text;
-    parF: Display.Frame;               (*dummy frame for Oberon.SetPar (only .text/.pos are used)*)
+    parF: Display.Frame;               (*dummy frame for Oberon.SetPar; cmd/pos start at 0*)
     name, cmd: ARRAY 64 OF CHAR;
     pfx: ARRAY 32 OF CHAR;
+    ownLog: Texts.Text;                (*installed as Oberon.Log if none exists yet at boot*)
 
   (* --- serial byte layer (PCLink1's Rec/Send, status-gated) --- *)
 
@@ -72,10 +73,11 @@ MODULE Agent;  (*puck serial agent server (Phase 1, v1 - no trap handler). See s
     NEW(par); Texts.Open(par, ""); i := 0;
     WHILE i < len DO Rec(x); Texts.Write(PW, CHR(x)); INC(i) END;
     Texts.Append(par, PW.buf);
-    Oberon.SetPar(parF, par, 0);
-    beg := Oberon.Log.len; Oberon.Call(cmd, res); lim := Oberon.Log.len;
-    IF res = 0 THEN status := stOk
-    ELSIF (res = 1) OR (res = 5) THEN status := stNotFound
+    Oberon.SetPar(parF, par, 0, 0, 0);     (*F, T, cmd, pos, res -- params start at 0*)
+    beg := Oberon.Log.len; Modules.Call(cmd, res); lim := Oberon.Log.len;
+    IF res = Modules.noerr THEN status := stOk
+    ELSIF (res = Modules.nofile) OR (res = Modules.nocmd)
+       OR (res = Modules.badcmd) OR (res = Modules.nomod) THEN status := stNotFound
     ELSE status := stError
     END;
     Send(rsync); Send(status); SendInt(lim - beg);
@@ -98,7 +100,7 @@ MODULE Agent;  (*puck serial agent server (Phase 1, v1 - no trap handler). See s
     END
   END Task;
 
-  (* --- introspection helpers (write to Oberon.Log, unlike the viewer-coupled originals) --- *)
+  (* --- introspection helpers (write to Oberon.Log, unlike viewer-coupled originals) --- *)
 
   PROCEDURE Prefixed(p, s: ARRAY OF CHAR): BOOLEAN;
     VAR i: INTEGER;
@@ -111,7 +113,7 @@ MODULE Agent;  (*puck serial agent server (Phase 1, v1 - no trap handler). See s
     VAR hp: FileDir.FileHeader;
   BEGIN
     IF Prefixed(pfx, fn) THEN
-      Kernel.GetSector(sec, hp);
+      Disk.GetSector(sec, hp);
       Texts.WriteString(W, fn); Texts.Write(W, 9X);
       Texts.WriteInt(W, hp.aleng*FileDir.SectorSize + hp.bleng - FileDir.HeaderSize, 1);
       Texts.Write(W, 9X); Texts.WriteClock(W, hp.date); Texts.WriteLn(W)
@@ -128,14 +130,14 @@ MODULE Agent;  (*puck serial agent server (Phase 1, v1 - no trap handler). See s
     Texts.Append(Oberon.Log, W.buf)
   END ListFiles;
 
-  PROCEDURE ListModules*;
+  PROCEDURE ListModules*;   (*name <TAB> refcnt <TAB> code-addr (EO 'prg')*)
     VAR m: Modules.Module;
   BEGIN m := Modules.root;
     WHILE m # NIL DO
       IF m.name[0] # 0X THEN
         Texts.WriteString(W, m.name); Texts.Write(W, 9X);
         Texts.WriteInt(W, m.refcnt, 1); Texts.Write(W, 9X);
-        Texts.WriteHex(W, m.code); Texts.WriteLn(W)
+        Texts.WriteHex(W, m.prg); Texts.WriteLn(W)
       END;
       m := m.next
     END;
@@ -148,7 +150,7 @@ MODULE Agent;  (*puck serial agent server (Phase 1, v1 - no trap handler). See s
     Texts.OpenScanner(S, Oberon.Par.text, Oberon.Par.pos); Texts.Scan(S);
     IF S.class = Texts.Name THEN
       Modules.Load(S.s, m);
-      IF Modules.res = 0 THEN
+      IF Modules.res = Modules.noerr THEN
         Texts.WriteString(W, "loaded "); Texts.WriteString(W, S.s)
       ELSE
         Texts.WriteString(W, "load failed "); Texts.WriteString(W, S.s);
@@ -169,5 +171,6 @@ MODULE Agent;  (*puck serial agent server (Phase 1, v1 - no trap handler). See s
   END Stop;
 
 BEGIN Texts.OpenWriter(W); Texts.OpenWriter(PW); NEW(parF);
-  T := Oberon.NewTask(Task, 0)
+  IF Oberon.Log = NIL THEN NEW(ownLog); Texts.Open(ownLog, ""); Oberon.OpenLog(ownLog) END;
+  T := Oberon.NewTask(Task, 0); Run   (*auto-start at boot (Oberon.Mod's body loads Agent)*)
 END Agent.

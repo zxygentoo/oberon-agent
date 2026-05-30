@@ -18,7 +18,7 @@ root with `make image` (see below).
 ## Bring-up (Phase 1)
 
 The emulator is a long-lived GUI process; the proxy is a client that connects to its
-serial line. Run them **separately** — boot once, run `Agent.Run` once, then drive as
+serial line. Run them **separately** — boot once (Agent auto-starts), then drive as
 often as you like (no reboot per task).
 
 1. Build an image with `Agent` compiled in — from the repo root:
@@ -32,14 +32,14 @@ often as you like (no reboot per task).
    `Agent.rsc` baked into the image. (`make` assembles `po2013/` + `oberon/*.Mod` into
    one tree.)
 
-2. Boot the emulator on two FIFOs (from the repo root) and start the server:
+2. Boot the emulator on two FIFOs (from the repo root):
 
    ```
    mkfifo /tmp/p.in /tmp/p.out                 # once
    ./bin/risc --serial-in /tmp/p.in --serial-out /tmp/p.out build/puck.dsk &
    ```
 
-   Then in the Oberon window run `Agent.Run` (Log shows: `Agent started`).
+   Agent auto-starts at boot (the Oberon log shows `Agent started`) — no manual step.
 
 3. Connect the proxy (repeat freely; the device stays up):
 

@@ -98,10 +98,15 @@ class AgentTools:
         return {"error": "load_failed", "res": int(m.group(1)) if m else None, "log": log}
 
     def unload_module(self, name: str) -> dict:
-        log = self._call_log("System.Free", name)
+        # EO safe-unload: System.Free /f. If no refs exist the module is fully removed;
+        # if refs persist (open viewers, heap objects of its types) it is *hidden*
+        # (renamed to "*<name>") so the block stays valid for live refs while a later
+        # load_module allocates a fresh block. Modules.Collect (in the GC task) frees
+        # hidden blocks once unreferenced. Refuses only if importing modules exist.
+        log = self._call_log("System.Free", f"{name} /f")
         if "failed" in log:
             return {"error": "in_use", "log": log.strip()}
-        return {"ok": True, "module": name}
+        return {"ok": True, "module": name, "log": log.strip()}
 
     # --- compile / run ---
 

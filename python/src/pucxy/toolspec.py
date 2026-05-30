@@ -76,7 +76,12 @@ TOOLS = [
     ),
     _tool(
         "unload_module",
-        "Unload a module (fails if it is still imported).",
+        "Unload a module via EO safe-unload (System.Free /f). If no refs exist the module "
+        "is fully removed; if refs persist (open viewers, heap objects of its types) the "
+        "module is hidden (renamed to '*<name>') and its memory stays valid until "
+        "Modules.Collect (in the GC task) reclaims it. After hide, load_module gets a "
+        "fresh block — safe live reload, no dangling pointers. Fails only if other loaded "
+        "modules still import this one.",
         {"name": _STR},
         ["name"],
     ),
