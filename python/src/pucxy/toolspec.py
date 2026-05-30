@@ -3,8 +3,6 @@
 Explicit, named tools with structured results — deliberately not one generic verb.
 """
 
-from __future__ import annotations
-
 
 def _tool(name: str, description: str, properties: dict, required: list[str]) -> dict:
     return {

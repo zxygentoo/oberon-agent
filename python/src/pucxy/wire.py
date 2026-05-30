@@ -4,11 +4,9 @@ Host is master: build a REQUEST, send it, then read one RESPONSE.
 All multi-byte integers are unsigned little-endian.
 """
 
-from __future__ import annotations
-
 import struct
+from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Callable
 
 SYNC_REQ = 0xA5
 SYNC_RESP = 0x5A
@@ -39,13 +37,6 @@ class Response:
         return self.status == ST_OK
 
 
-def _name_field(name: str) -> bytes:
-    b = name.encode("latin1")
-    if not 1 <= len(b) <= 255:
-        raise ValueError(f"name length {len(b)} out of range 1..255: {name!r}")
-    return bytes([len(b)]) + b
-
-
 def build_put(name: str, data: bytes) -> bytes:
     return bytes([SYNC_REQ, OP_PUT]) + _name_field(name) + struct.pack("<I", len(data)) + data
 
@@ -56,6 +47,13 @@ def build_get(name: str) -> bytes:
 
 def build_call(cmd: str, par: bytes = b"") -> bytes:
     return bytes([SYNC_REQ, OP_CALL]) + _name_field(cmd) + struct.pack("<I", len(par)) + par
+
+
+def _name_field(name: str) -> bytes:
+    b = name.encode("latin1")
+    if not 1 <= len(b) <= 255:
+        raise ValueError(f"name length {len(b)} out of range 1..255: {name!r}")
+    return bytes([len(b)]) + b
 
 
 def read_response(recv: Callable[[int], bytes]) -> Response:

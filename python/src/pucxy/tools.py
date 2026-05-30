@@ -1,139 +1,169 @@
 """Agent tools implemented on the three wire ops. See spec.md section 4.3.
 
-Each method returns a JSON-serializable dict (the tool result the LLM sees).
+Each function returns a JSON-serializable dict (the tool result the LLM sees).
+A Device is anything that answers a wire request — Transport or a test fake.
 """
-
-from __future__ import annotations
 
 import re
 from typing import Protocol
 
 from . import wire
 from .oberon_text import from_oberon, to_oberon
-from .toolspec import TOOL_NAMES
 
 
 class Device(Protocol):
-    """Anything that answers a wire request: a Transport, or a test fake."""
+    """Anything that answers a wire request."""
 
     def request(self, frame: bytes) -> wire.Response: ...
 
 
-class AgentTools:
-    def __init__(self, transport: Device):
-        self.t = transport
+# --- files ---
 
-    # --- files ---
 
-    def read_file(self, path: str) -> dict:
-        r = self.t.request(wire.build_get(path))
-        if r.status == wire.ST_NOT_FOUND:
-            return {"error": "not_found", "path": path}
-        if not r.ok:
-            return {"error": wire.STATUS_NAMES.get(r.status, "error")}
-        return {"content": from_oberon(r.payload)}
+def read_file(t: Device, path: str) -> dict:
+    r = t.request(wire.build_get(path))
+    if r.status == wire.ST_NOT_FOUND:
+        return {"error": "not_found", "path": path}
+    if not r.ok:
+        return {"error": wire.STATUS_NAMES.get(r.status, "error")}
+    return {"content": from_oberon(r.payload)}
 
-    def write_file(self, path: str, content: str) -> dict:
-        r = self.t.request(wire.build_put(path, to_oberon(content)))
-        if not r.ok:
-            return {"error": wire.STATUS_NAMES.get(r.status, "error")}
-        return {"ok": True, "path": path, "bytes": len(content)}
 
-    def edit_file(self, path: str, old: str, new: str) -> dict:
-        got = self.read_file(path)
-        if "error" in got:
-            return got
-        content = got["content"]
-        count = content.count(old)
-        if count == 0:
-            return {"error": "not_found", "detail": "old string not present in file"}
-        if count > 1:
-            return {"error": "not_unique", "detail": f"old string occurs {count} times"}
-        written = self.write_file(path, content.replace(old, new, 1))
-        if "error" in written:
-            return written
-        return {"ok": True, "path": path, "replaced": 1}
+def write_file(t: Device, path: str, content: str) -> dict:
+    r = t.request(wire.build_put(path, to_oberon(content)))
+    if not r.ok:
+        return {"error": wire.STATUS_NAMES.get(r.status, "error")}
+    return {"ok": True, "path": path, "bytes": len(content)}
 
-    def delete_file(self, path: str) -> dict:
-        log = self._call_log("System.DeleteFiles", path)
-        if "failed" in log:
-            return {"error": "not_found", "log": log.strip()}
-        return {"ok": True, "path": path}
 
-    # --- listing / modules ---
+def edit_file(t: Device, path: str, old: str, new: str) -> dict:
+    got = read_file(t, path)
+    if "error" in got:
+        return got
+    content = got["content"]
+    count = content.count(old)
+    if count == 0:
+        return {"error": "not_found", "detail": "old string not present in file"}
+    if count > 1:
+        return {"error": "not_unique", "detail": f"old string occurs {count} times"}
+    written = write_file(t, path, content.replace(old, new, 1))
+    if "error" in written:
+        return written
+    return {"ok": True, "path": path, "replaced": 1}
 
-    def list_files(self, prefix: str = "") -> dict:
-        files = []
-        for line in self._call_log("Agent.ListFiles", prefix).splitlines():
-            parts = line.split("\t")
-            if not parts[0]:
-                continue
-            entry: dict = {"name": parts[0]}
-            if len(parts) > 1 and parts[1].strip().isdigit():
-                entry["size"] = int(parts[1].strip())
-            if len(parts) > 2 and parts[2].strip():
-                entry["date"] = parts[2].strip()
-            files.append(entry)
-        return {"files": files}
 
-    def list_modules(self) -> dict:
-        mods = []
-        for line in self._call_log("Agent.ListModules", "").splitlines():
-            parts = line.split("\t")
-            if not parts[0]:
-                continue
-            m: dict = {"name": parts[0]}
-            if len(parts) > 1 and parts[1].strip().lstrip("-").isdigit():
-                m["refcnt"] = int(parts[1].strip())
-            if len(parts) > 2 and parts[2].strip():
-                m["code_addr"] = parts[2].strip()
-            mods.append(m)
-        return {"modules": mods}
+def delete_file(t: Device, path: str) -> dict:
+    log = _call_log(t, "System.DeleteFiles", path)
+    if "failed" in log:
+        return {"error": "not_found", "log": log.strip()}
+    return {"ok": True, "path": path}
 
-    def load_module(self, name: str) -> dict:
-        log = self._call_log("Agent.Load", name).strip()
-        if log.startswith("loaded"):
-            return {"ok": True, "module": name}
-        m = re.search(r"res=(\d+)", log)
-        return {"error": "load_failed", "res": int(m.group(1)) if m else None, "log": log}
 
-    def unload_module(self, name: str) -> dict:
-        # EO safe-unload: System.Free /f. If no refs exist the module is fully removed;
-        # if refs persist (open viewers, heap objects of its types) it is *hidden*
-        # (renamed to "*<name>") so the block stays valid for live refs while a later
-        # load_module allocates a fresh block. Modules.Collect (in the GC task) frees
-        # hidden blocks once unreferenced. Refuses only if importing modules exist.
-        log = self._call_log("System.Free", f"{name} /f")
-        if "failed" in log:
-            return {"error": "in_use", "log": log.strip()}
-        return {"ok": True, "module": name, "log": log.strip()}
+# --- listing / modules ---
 
-    # --- compile / run ---
 
-    def compile(self, name: str, new_symbol: bool = False) -> dict:
-        # Returns the raw Oberon.Log delta; the model reads diagnostics / the success
-        # line directly (offset->line mapping proved unnecessary — see spec.md section 7).
-        par = name + ("/s" if new_symbol else "")
-        r = self.t.request(wire.build_call("ORP.Compile", to_oberon(par)))
-        return {"output": from_oberon(r.payload)}
+def list_files(t: Device, prefix: str = "") -> dict:
+    rows = _split_tabular(_call_log(t, "Agent.ListFiles", prefix))
+    return {"files": [_parse_file_entry(p) for p in rows]}
 
-    def run_command(self, cmd: str, args: str = "") -> dict:
-        r = self.t.request(wire.build_call(cmd, to_oberon(args)))
-        return {
-            "status": wire.STATUS_NAMES.get(r.status, str(r.status)),
-            "ok": r.ok,
-            "log": from_oberon(r.payload),
-        }
 
-    # --- internals ---
+def _parse_file_entry(parts: list[str]) -> dict:
+    entry: dict = {"name": parts[0]}
+    if len(parts) > 1 and parts[1].strip().isdigit():
+        entry["size"] = int(parts[1].strip())
+    if len(parts) > 2 and parts[2].strip():
+        entry["date"] = parts[2].strip()
+    return entry
 
-    def _call_log(self, cmd: str, args: str) -> str:
-        return from_oberon(self.t.request(wire.build_call(cmd, to_oberon(args))).payload)
 
-    def dispatch(self, name: str, args: dict) -> dict:
-        if name not in TOOL_NAMES:
-            return {"error": f"unknown tool {name!r}"}
-        try:
-            return getattr(self, name)(**args)
-        except TypeError as e:
-            return {"error": f"bad arguments for {name}: {e}"}
+def list_modules(t: Device) -> dict:
+    rows = _split_tabular(_call_log(t, "Agent.ListModules", ""))
+    return {"modules": [_parse_module_entry(p) for p in rows]}
+
+
+def _parse_module_entry(parts: list[str]) -> dict:
+    entry: dict = {"name": parts[0]}
+    if len(parts) > 1 and parts[1].strip().lstrip("-").isdigit():
+        entry["refcnt"] = int(parts[1].strip())
+    if len(parts) > 2 and parts[2].strip():
+        entry["code_addr"] = parts[2].strip()
+    return entry
+
+
+def load_module(t: Device, name: str) -> dict:
+    log = _call_log(t, "Agent.Load", name).strip()
+    if log.startswith("loaded"):
+        return {"ok": True, "module": name}
+    m = re.search(r"res=(\d+)", log)
+    return {"error": "load_failed", "res": int(m.group(1)) if m else None, "log": log}
+
+
+def unload_module(t: Device, name: str) -> dict:
+    # EO safe-unload: System.Free /f. If no refs exist the module is fully removed;
+    # if refs persist (open viewers, heap objects of its types) it is *hidden*
+    # (renamed to "*<name>") so the block stays valid for live refs while a later
+    # load_module allocates a fresh block. Modules.Collect (in the GC task) frees
+    # hidden blocks once unreferenced. Refuses only if importing modules exist.
+    log = _call_log(t, "System.Free", f"{name} /f")
+    if "failed" in log:
+        return {"error": "in_use", "log": log.strip()}
+    return {"ok": True, "module": name, "log": log.strip()}
+
+
+# --- compile / run ---
+
+
+def compile_module(t: Device, name: str, new_symbol: bool = False) -> dict:
+    # Returns the raw Oberon.Log delta; the model reads diagnostics / the success
+    # line directly (offset->line mapping proved unnecessary — see spec.md section 7).
+    par = name + ("/s" if new_symbol else "")
+    r = t.request(wire.build_call("ORP.Compile", to_oberon(par)))
+    return {"output": from_oberon(r.payload)}
+
+
+def run_command(t: Device, cmd: str, args: str = "") -> dict:
+    r = t.request(wire.build_call(cmd, to_oberon(args)))
+    return {
+        "status": wire.STATUS_NAMES.get(r.status, str(r.status)),
+        "ok": r.ok,
+        "log": from_oberon(r.payload),
+    }
+
+
+# --- dispatch ---
+
+
+_DISPATCH = {
+    "read_file": read_file,
+    "write_file": write_file,
+    "edit_file": edit_file,
+    "delete_file": delete_file,
+    "list_files": list_files,
+    "list_modules": list_modules,
+    "load_module": load_module,
+    "unload_module": unload_module,
+    "compile": compile_module,
+    "run_command": run_command,
+}
+
+
+def dispatch(t: Device, name: str, args: dict) -> dict:
+    fn = _DISPATCH.get(name)
+    if fn is None:
+        return {"error": f"unknown tool {name!r}"}
+    try:
+        return fn(t, **args)
+    except TypeError as e:
+        return {"error": f"bad arguments for {name}: {e}"}
+
+
+# --- shared internals ---
+
+
+def _call_log(t: Device, cmd: str, args: str) -> str:
+    return from_oberon(t.request(wire.build_call(cmd, to_oberon(args))).payload)
+
+
+def _split_tabular(text: str) -> list[list[str]]:
+    """Tab-delimited lines split into fields, skipping blanks."""
+    return [parts for parts in (line.split("\t") for line in text.splitlines()) if parts[0]]

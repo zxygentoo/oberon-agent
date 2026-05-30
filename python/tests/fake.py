@@ -1,10 +1,8 @@
 """In-memory fake of the Oberon side: decode wire frames, serve files and a few
 commands. Lets tools be tested end-to-end without the emulator."""
 
-from __future__ import annotations
-
 import struct
-from typing import Callable
+from collections.abc import Callable
 
 from pucxy import wire
 

@@ -5,8 +5,6 @@ Files written by Oberon's editor (Texts.Close) carry a 0F1X-tagged formatted
 header; we strip it to the plain run (the `ob2unix` operation).
 """
 
-from __future__ import annotations
-
 TEXT_TAG = 0xF1
 
 
@@ -29,8 +27,9 @@ def _strip_text_header(data: bytes) -> bytes:
     [tag:1][off:4 LE][font/attr runs ...][0][T.len:4][chars at file offset `off`].
     `off` is the absolute file offset where the characters begin.
     """
-    if len(data) >= 5:
-        off = int.from_bytes(data[1:5], "little", signed=True)
-        if 5 <= off <= len(data):
-            return data[off:]
+    if len(data) < 5:
+        return data
+    off = int.from_bytes(data[1:5], "little", signed=True)
+    if 5 <= off <= len(data):
+        return data[off:]
     return data
