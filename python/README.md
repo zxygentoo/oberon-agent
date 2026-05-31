@@ -1,6 +1,7 @@
 # pucxy
 
-Host-side proxy for the **puck** coding agent on Project Oberon 2013.
+Host-side proxy for the **puck** coding agent on Extended Oberon (Oberon-2 2020 Edition,
+derived from Project Oberon 2013).
 
 It owns HTTPS + JSON to the LLM and speaks a minimal `PUT`/`GET`/`CALL` wire
 protocol over Oberon's serial line to `Agent.Mod`. See the top-level
@@ -27,10 +28,11 @@ often as you like (no reboot per task).
    make image                                # -> build/puck.dsk
    ```
 
-   `build-image` compiles every file in the source tree except those in its `.packonly`,
-   ordered by a topological sort of `IMPORT`s, so `oberon/Agent.Mod` is compiled and its
-   `Agent.rsc` baked into the image. (`make` assembles `po2013/` + `oberon/*.Mod` into
-   one tree.)
+   `build-eo-image` compiles every file in the source tree except those in its `.packonly`,
+   ordered by a topological sort of `IMPORT`s, so `oberon/Agent.Mod` is compiled (its
+   `Agent.rsc` baked into the image) and our patched `oberon/Oberon.Mod` loads Agent at
+   boot. (`make` assembles `eo/` + `oberon/*.Mod` into one tree; `oberon/` overrides
+   upstream by name.)
 
 2. Boot the emulator on two FIFOs (from the repo root):
 

@@ -20,10 +20,15 @@ authoritative design, research findings, and locked decisions.
 
 ## Conventions
 
-- Oberon side: Oberon-07 (as in PO2013), sources in `oberon/`. Host proxy: Python, in `python/`
-  (a `uv` project; package `pucxy`).
-- Reference material (gitignored, local): PO2013 source in `po2013/`, the book in
-  `book/`, the built emulator + tools in `bin/` (`risc`, `build-image`).
+- Oberon side: Extended Oberon (Oberon-2 2020 Edition — a superset of Oberon-07 adding
+  type-bound procedures, FINAL blocks, and safe module unloading). Our additions live in
+  `oberon/`: `Agent.Mod` (the wire endpoint) and a patched `Oberon.Mod` that loads it at
+  boot; both override their EO upstream counterparts when the image is built. Host proxy:
+  Python, in `python/` (a `uv` project; package `pucxy`).
+- Reference material (gitignored, local): Extended Oberon source in `eo/`, PO2013 source
+  in `po2013/`, the book in `book/`, the host tools in `bin/` (`risc`, `build-eo-image`,
+  `build-image`, `ob2unix`, `extract-source`, …). Local build outputs go to `build/`;
+  session logs (emulator + pucxy) to `log/`.
 - *(more as they emerge)*
 
 ## Style preferences
