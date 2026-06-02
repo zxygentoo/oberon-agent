@@ -1,12 +1,6 @@
-# oberon host tools
-bin/
-# project oberon book pdfs
-book/
-# project oberon 2013 edition source code
-po2013/
-# project extended oberon source code
-eo/
-# local build folder
+# build outputs: extracted eo-source, assembled tree, disk images
 build/
 # session logs (emulator + pucxy)
 log/
+# cargo target dir inside the risc-emu submodule
+vendor/*/target/
