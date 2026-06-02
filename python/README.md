@@ -53,13 +53,9 @@ often as you like (no reboot per task).
 
    ```
    cd python
-   # no LLM needed — direct wire smoke test:
-   uv run pucxy tool --serial-in /tmp/p.in --serial-out /tmp/p.out list_modules
-   uv run pucxy tool --serial-in /tmp/p.in --serial-out /tmp/p.out read_file '{"path":"Agent.Mod"}'
-
-   # full agent (DeepSeek shown; any OpenAI-compatible API works):
+   # DeepSeek shown; any OpenAI-compatible API works:
    export PUCXY_API_KEY=...
-   uv run pucxy run --serial-in /tmp/p.in --serial-out /tmp/p.out \
+   uv run pucxy --serial-in /tmp/p.in --serial-out /tmp/p.out \
        --base-url https://api.deepseek.com --model deepseek-v4-pro \
        "list the modules, then show me Agent.Mod"
    ```
