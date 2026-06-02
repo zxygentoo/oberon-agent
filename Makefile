@@ -35,7 +35,7 @@ FIFO_OUT    ?= /tmp/p.out
 PATCHES     := $(wildcard oberon/*.patch)
 NEW_MODS    := $(wildcard oberon/*.Mod)
 
-.PHONY: image tools eo-source wip patches oberon agent clean distclean
+.PHONY: image tools eo-source wip patches oberon puck clean distclean
 
 # --- image build -------------------------------------------------------------
 
@@ -71,7 +71,8 @@ eo-source: $(EO_SRC)/.stamp
 
 $(EO_SRC)/.stamp: $(EO_TARBALL) | tools
 	@mkdir -p build
-	tar -xzf $(EO_TARBALL) -C build --strip-components=1 S3RISCinstall/RISC.img
+	tar --warning=no-unknown-keyword -xzf $(EO_TARBALL) \
+	  -C build --strip-components=1 S3RISCinstall/RISC.img
 	mv build/RISC.img $(EO_STOCK)
 	$(EXTRACT) $(EO_STOCK) $(EO_SRC)
 	@touch $@
@@ -117,14 +118,18 @@ oberon: $(IMAGE)
 	echo "logging to $$LOG"; \
 	$(RISC) --serial-in $(FIFO_IN) --serial-out $(FIFO_OUT) $(IMAGE) 2>&1 | tee "$$LOG"
 
-agent:
+# `make puck` drives the agent against the running emulator. The proxy requires
+# --model and --api-key; pass them (and any other puck flags) via ARGS, e.g.:
+#   make puck ARGS="--model=deepseek --api-key=$YOUR_KEY"
+puck:
 	@mkdir -p log
-	@TS=$$(date +%Y%m%d-%H%M%S); ROOT=$$(pwd); LOG=$$ROOT/log/agent-$$TS.log; \
+	@TS=$$(date +%Y%m%d-%H%M%S); ROOT=$$(pwd); LOG=$$ROOT/log/puck-$$TS.log; \
 	RL=$$(command -v rlwrap || true); \
 	echo "logging to $$LOG"; \
 	cd python && $$RL uv run puck \
 		--serial-in $(FIFO_IN) --serial-out $(FIFO_OUT) \
-		--log "$$LOG"
+		--log "$$LOG" \
+		$(ARGS)
 
 # --- cleanup -----------------------------------------------------------------
 

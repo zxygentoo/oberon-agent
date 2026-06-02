@@ -53,13 +53,13 @@ often as you like (no reboot per task).
 
    ```
    cd python
-   export LLM_API_KEY=...
    uv run puck --serial-in /tmp/p.in --serial-out /tmp/p.out \
+       --model deepseek --api-key "$YOUR_KEY" \
        "list the modules, then show me Puck.Mod"
    ```
 
-   `--model deepseek|openai|claude` picks the provider (default `deepseek`);
-   each one ships with sensible base URL + model defaults.
+   `--model deepseek|openai|claude` picks the provider (required); each one ships with
+   sensible base URL + model defaults. `--api-key` is also required.
 
 The proxy is a client — it never boots the emulator. Run the emulator yourself (step 2)
 and the proxy attaches to its serial line.

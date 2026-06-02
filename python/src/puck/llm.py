@@ -5,7 +5,6 @@ so swapping to a native client later is a one-file change. Streams text and
 accumulates tool calls from deltas.
 """
 
-import os
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass, field
 from typing import Any, cast
@@ -26,10 +25,9 @@ class LLM:
     model: str
 
 
-def make_llm(model: str, base_url: str | None = None, api_key: str | None = None) -> LLM:
-    """Build an LLM bound to the given model. Picks the API key from arg or $LLM_API_KEY."""
-    key = api_key or os.environ.get("LLM_API_KEY")
-    return LLM(OpenAI(base_url=base_url, api_key=key), model)
+def make_llm(model: str, api_key: str, base_url: str | None = None) -> LLM:
+    """Build an LLM bound to the given model."""
+    return LLM(OpenAI(base_url=base_url, api_key=api_key), model)
 
 
 def respond(

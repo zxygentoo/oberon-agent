@@ -37,11 +37,10 @@ PROVIDERS = {
 @click.option(
     "--model",
     type=click.Choice(list(PROVIDERS)),
-    default="deepseek",
-    show_default=True,
+    required=True,
     help="LLM provider",
 )
-@click.option("--api-key", envvar="LLM_API_KEY", help="LLM API key (else $LLM_API_KEY)")
+@click.option("--api-key", required=True, help="LLM API key")
 @click.option(
     "--log",
     "log_path",
@@ -55,7 +54,7 @@ def main(
     serial_out: str | None,
     timeout: float,
     model: str,
-    api_key: str | None,
+    api_key: str,
     log_path: str | None,
     task: str | None,
 ) -> None:
@@ -64,8 +63,6 @@ def main(
     Attaches to an already-running emulator's serial line. Pass a TASK to run
     once, or omit for an interactive session.
     """
-    if not api_key:
-        raise click.UsageError("set $LLM_API_KEY or pass --api-key")
     try:
         _run(serial, serial_in, serial_out, timeout, model, api_key, log_path, task)
     except tp.TransportTimeout as e:

@@ -48,8 +48,10 @@ The toplevel `Makefile` drives everything; from a fresh `git clone --recurse-sub
 - `make image` — assemble `build/src/` (copy `build/eo/.`, apply `oberon/*.patch` via
   `ob2txt`/`patch`/`txt2ob` roundtrip, drop in `oberon/*.Mod` converted to CR), then
   `build-eo-image build/src build/puck.dsk`.
-- `make oberon` / `make agent` — run the emulator / puck against `/tmp/p.in`+`/tmp/p.out`
-  (override with `FIFO_IN=` / `FIFO_OUT=`); both tee a timestamped log into `log/`.
+- `make oberon` / `make puck` — run the emulator / puck against `/tmp/p.in`+`/tmp/p.out`
+  (override with `FIFO_IN=` / `FIFO_OUT=`); both tee a timestamped log into `log/`. The
+  proxy requires `--model` and `--api-key`; forward them (and any other puck flags) via
+  `ARGS=`, e.g. `make puck ARGS="--model=deepseek --api-key=$KEY"`.
 - `make clean` — `rm -rf build`.   `make distclean` — also wipes the cargo target dir.
 
 ### Editing an upstream module
