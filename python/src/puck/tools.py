@@ -52,7 +52,10 @@ def edit_file(t: Device, path: str, old: str, new: str) -> dict:
 
 def delete_file(t: Device, path: str) -> dict:
     log = _call_log(t, "System.DeleteFiles", path)
-    if "failed" in log:
+    # Oberon writes "<name> deleting" on success and appends " failed" on res # 0
+    # (System.Mod, DeleteFiles). Match the full phrase so a filename containing
+    # "failed" doesn't trip the check.
+    if "deleting failed" in log:
         return {"error": "not_found", "log": log.strip()}
     return {"ok": True, "path": path}
 
@@ -103,7 +106,10 @@ def unload_module(t: Device, name: str) -> dict:
     # load_module allocates a fresh block. Modules.Collect (in the GC task) frees
     # hidden blocks once unreferenced. Refuses only if importing modules exist.
     log = _call_log(t, "System.Free", f"{name} /f")
-    if "failed" in log:
+    # FreeModules emits "<mod> unloading failed, try /f option" on the only path
+    # /f can't override (importers still loaded — System.Mod line 455). Match the
+    # full phrase rather than bare "failed".
+    if "unloading failed" in log:
         return {"error": "in_use", "log": log.strip()}
     return {"ok": True, "module": name, "log": log.strip()}
 

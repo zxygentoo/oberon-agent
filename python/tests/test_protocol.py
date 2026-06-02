@@ -66,3 +66,16 @@ def test_name_length_validated():
         protocol.build_get("x" * 256)
     with pytest.raises(ValueError):
         protocol.build_get("")
+
+
+def test_read_response_empty_sync_raises_protocol_error():
+    """EOF on the sync byte read (recv returns b'') is a distinct branch from a
+    wrong sync byte — both must raise ProtocolError."""
+    with pytest.raises(protocol.ProtocolError):
+        protocol.read_response(reader(b""))
+
+
+def test_build_call_with_default_empty_par():
+    """Length prefix is still written for a zero-length par."""
+    f = protocol.build_call("Mod.Proc")
+    assert f[-4:] == struct.pack("<I", 0)
