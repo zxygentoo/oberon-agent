@@ -4,11 +4,11 @@ A coding agent that runs on — and modifies — a *live* Extended Oberon system
 
 Extended Oberon can compile, load, and *safely unload* modules in the running system, so
 an agent with the right tools can change the live system from the inside (and, as a
-stretch goal, the compiler toolchain itself). puck is a thin host-side proxy that bridges
-Oberon's serial line to an LLM, plus a small Oberon-side server that exposes the system
-as agent tools.
+stretch goal, the compiler toolchain itself). The host-side proxy runs the agent loop and
+talks to the LLM; a small Oberon-side server (`Puck.Mod`) handles the wire protocol on
+the device.
 
-**Status:** Working — `pucxy` (the host proxy) drives a live Extended Oberon image
+**Status:** Working — `puck` (the host proxy) drives a live Extended Oberon image
 through a set of named tools: read/write/edit/delete files, list files and modules,
 compile, load and (safely) unload modules, plus a `run_command` escape hatch. See
 [`spec.md`](spec.md) for the design and [`AGENTS.md`](AGENTS.md) for working notes.
@@ -16,7 +16,7 @@ compile, load and (safely) unload modules, plus a `run_command` escape hatch. Se
 ## How it fits together
 
 ```
-LLM  <-HTTPS/JSON->  host proxy (Python)  <-RS232 wire protocol->  Agent.Mod on Oberon
+LLM  <-HTTPS/JSON->  host proxy (Python)  <-RS232 wire protocol->  Puck.Mod on Oberon
 ```
 
 The serial line is the only channel out of the emulated machine. The host proxy owns
@@ -39,19 +39,19 @@ mkfifo /tmp/p.in /tmp/p.out                   # once
 make oberon                                   # runs the emulator (GUI)
 
 # in another shell:
-export PUCXY_API_KEY=...
-make agent                                    # drives pucxy against the running emu
+export LLM_API_KEY=...
+make agent                                    # drives puck against the running emu
 ```
 
 ## Repo layout
 
 - `oberon/` — our additions to Extended Oberon. New modules live as `<Name>.Mod`
-  (currently `Agent.Mod` — the wire endpoint); modifications to upstream modules live as
-  `<Name>.Mod.patch` unified diffs against EO (currently `Oberon.Mod.patch` — loads Agent
+  (currently `Puck.Mod` — the wire endpoint); modifications to upstream modules live as
+  `<Name>.Mod.patch` unified diffs against EO (currently `Oberon.Mod.patch` — loads `Puck`
   at boot).
-- `python/` — the Python host proxy: its own `uv` project (`src/pucxy/`, `tests/`, `pyproject.toml`).
+- `python/` — the Python host proxy: its own `uv` project (`src/puck/`, `tests/`, `pyproject.toml`).
 - `Makefile` — `make image` (build the disk), `make oberon` (run the emulator),
-  `make agent` (drive pucxy against the running emulator); plus `tools`, `eo-source`,
+  `make agent` (drive puck against the running emulator); plus `tools`, `eo-source`,
   `wip`, `patches`, `clean`, `distclean` — see the file or `AGENTS.md`.
 - `vendor/risc-emu/` — submodule: Rust port of the RISC5 emulator + host tools.
 - `vendor/extended-oberon/` — submodule: Andreas Pirklbauer's Extended Oberon
@@ -59,7 +59,7 @@ make agent                                    # drives pucxy against the running
 - `README.md`, `AGENTS.md` — committed docs (`CLAUDE.md` symlinks to `AGENTS.md`).
 - `spec.md` — the authoritative design doc (research findings, decisions, system design).
 - `build/` — generated tree (gitignored): `eo-stock.dsk`, `eo/`, `src/`, `wip/`, `puck.dsk`.
-- `log/` — session logs (emulator + pucxy), gitignored.
+- `log/` — session logs (emulator + puck), gitignored.
 
 ## License
 

@@ -2,7 +2,7 @@ import struct
 
 import pytest
 
-from pucxy import protocol
+from puck import protocol
 
 
 def reader(buf: bytes):
@@ -18,13 +18,15 @@ def reader(buf: bytes):
 
 
 def test_build_put_layout():
-    f = protocol.build_put("Agent.Mod", b"abc")
+    name = "Puck.Mod"
+    nl = len(name)
+    f = protocol.build_put(name, b"abc")
     assert f[0] == protocol.SYNC_REQ
     assert f[1] == protocol.OP_PUT
-    assert f[2] == len("Agent.Mod")
-    assert f[3:12] == b"Agent.Mod"
-    assert f[12:16] == struct.pack("<I", 3)
-    assert f[16:] == b"abc"
+    assert f[2] == nl
+    assert f[3 : 3 + nl] == name.encode()
+    assert f[3 + nl : 3 + nl + 4] == struct.pack("<I", 3)
+    assert f[3 + nl + 4 :] == b"abc"
 
 
 def test_build_get_layout():

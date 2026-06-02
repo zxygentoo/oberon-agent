@@ -1,4 +1,4 @@
-"""Wire protocol (proxy <-> Oberon Agent.Mod). See spec.md section 4.2.
+"""Wire protocol (proxy <-> Oberon Puck.Mod). See spec.md section 4.2.
 
 Host is master: build a REQUEST, send it, then read one RESPONSE.
 All multi-byte integers are unsigned little-endian.

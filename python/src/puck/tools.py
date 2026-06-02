@@ -1,4 +1,4 @@
-"""Agent tools implemented on the three wire ops. See spec.md section 4.3.
+"""Host-side tools implemented on the three wire ops. See spec.md section 4.3.
 
 Each function returns a JSON-serializable dict (the tool result the LLM sees).
 A Device is anything that turns a wire request frame into a wire response —
@@ -61,7 +61,7 @@ def delete_file(t: Device, path: str) -> dict:
 
 
 def list_files(t: Device, prefix: str = "") -> dict:
-    rows = _split_tabular(_call_log(t, "Agent.ListFiles", prefix))
+    rows = _split_tabular(_call_log(t, "Puck.ListFiles", prefix))
     return {"files": [_parse_file_entry(p) for p in rows]}
 
 
@@ -75,7 +75,7 @@ def _parse_file_entry(parts: list[str]) -> dict:
 
 
 def list_modules(t: Device) -> dict:
-    rows = _split_tabular(_call_log(t, "Agent.ListModules", ""))
+    rows = _split_tabular(_call_log(t, "Puck.ListModules", ""))
     return {"modules": [_parse_module_entry(p) for p in rows]}
 
 
@@ -89,7 +89,7 @@ def _parse_module_entry(parts: list[str]) -> dict:
 
 
 def load_module(t: Device, name: str) -> dict:
-    log = _call_log(t, "Agent.Load", name).strip()
+    log = _call_log(t, "Puck.Load", name).strip()
     if log.startswith("loaded"):
         return {"ok": True, "module": name}
     m = re.search(r"res=(\d+)", log)

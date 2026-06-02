@@ -1,4 +1,4 @@
-MODULE Agent;  (*puck serial agent server -- Extended Oberon target. See spec section 4.4.*)
+MODULE Puck;  (*serial agent server for the puck coding agent -- Extended Oberon target. See spec section 4.4.*)
   IMPORT SYSTEM, Disk, FileDir, Files, Modules, Display, Texts, Oberon;
 
   CONST
@@ -160,17 +160,8 @@ MODULE Agent;  (*puck serial agent server -- Extended Oberon target. See spec se
     END
   END Load;
 
-  PROCEDURE Run*;
-  BEGIN Oberon.Install(T);
-    Texts.WriteString(W, "Agent started"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
-  END Run;
-
-  PROCEDURE Stop*;
-  BEGIN Oberon.Remove(T);
-    Texts.WriteString(W, "Agent stopped"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
-  END Stop;
-
 BEGIN Texts.OpenWriter(W); Texts.OpenWriter(PW); NEW(parF);
   IF Oberon.Log = NIL THEN NEW(ownLog); Texts.Open(ownLog, ""); Oberon.OpenLog(ownLog) END;
-  T := Oberon.NewTask(Task, 0); Run   (*auto-start at boot (Oberon.Mod's body loads Agent)*)
-END Agent.
+  T := Oberon.NewTask(Task, 0); Oberon.Install(T);
+  Texts.WriteString(W, "Puck installed"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+END Puck.

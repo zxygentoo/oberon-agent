@@ -26,7 +26,7 @@ TOOLS = [
     _tool(
         "read_file",
         "Read a file from the Oberon system and return its text.",
-        {"path": {**_STR, "description": "File name, e.g. 'Agent.Mod'."}},
+        {"path": {**_STR, "description": "File name, e.g. 'Puck.Mod'."}},
         ["path"],
     ),
     _tool(
@@ -58,7 +58,7 @@ TOOLS = [
         "either error lines ('pos <offset> <message>' then 'compilation FAILED') or a success "
         "line ('compiling <Mod> [new symbol file] <codeBytes> <dataBytes> <key>').",
         {
-            "name": {**_STR, "description": "Source file, e.g. 'Agent.Mod'."},
+            "name": {**_STR, "description": "Source file, e.g. 'Puck.Mod'."},
             "new_symbol": {
                 "type": "boolean",
                 "description": "Pass /s to (re)write the symbol file when the interface changed.",
@@ -69,7 +69,7 @@ TOOLS = [
     _tool(
         "load_module",
         "Load a compiled module into the running system.",
-        {"name": {**_STR, "description": "Module name (no extension), e.g. 'Agent'."}},
+        {"name": {**_STR, "description": "Module name (no extension), e.g. 'Puck'."}},
         ["name"],
     ),
     _tool(

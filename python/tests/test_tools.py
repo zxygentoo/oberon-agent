@@ -1,6 +1,6 @@
 from fake import FakeTransport
 
-from pucxy import tools
+from puck import tools
 
 
 def test_write_then_read_roundtrip():
@@ -49,7 +49,7 @@ def test_list_files():
 
 def test_list_modules():
     mods = tools.list_modules(FakeTransport())["modules"]
-    assert any(m["name"] == "Agent" for m in mods)
+    assert any(m["name"] == "Puck" for m in mods)
 
 
 def test_load_module():

@@ -4,7 +4,7 @@ commands. Lets tools be tested end-to-end without the emulator."""
 import struct
 from collections.abc import Callable
 
-from pucxy import protocol
+from puck import protocol
 
 CallHandler = Callable[[str, bytes], tuple[int, bytes] | None]
 
@@ -12,7 +12,7 @@ CallHandler = Callable[[str, bytes], tuple[int, bytes] | None]
 class FakeTransport:
     def __init__(self, files: dict[str, bytes] | None = None, call: CallHandler | None = None):
         self.files: dict[str, bytes] = dict(files or {})
-        self.modules: set[str] = {"System", "Oberon", "Agent"}
+        self.modules: set[str] = {"System", "Oberon", "Puck"}
         self._call = call
 
     def __call__(self, frame: bytes) -> protocol.Response:
@@ -60,13 +60,13 @@ class FakeTransport:
                 action = "removing from module list" if "/f" in arg else "unloading"
                 return protocol.ST_OK, f"System.Free\n{parts[0]} {action}\n".encode()
             return protocol.ST_OK, b"System.Free\n"
-        if cmd == "Agent.Load":
+        if cmd == "Puck.Load":
             self.modules.add(arg)
             return protocol.ST_OK, f"loaded {arg}\n".encode()
-        if cmd == "Agent.ListFiles":
+        if cmd == "Puck.ListFiles":
             lines = [f"{n}\t{len(d)}\t01.01.24 00:00:00" for n, d in sorted(self.files.items())]
             return protocol.ST_OK, ("\n".join(lines) + "\n").encode()
-        if cmd == "Agent.ListModules":
+        if cmd == "Puck.ListModules":
             lines = [f"{m}\t0\t 00001000" for m in sorted(self.modules)]
             return protocol.ST_OK, ("\n".join(lines) + "\n").encode()
         return protocol.ST_OK, b""

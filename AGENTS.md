@@ -22,10 +22,10 @@ authoritative design, research findings, and locked decisions.
 
 - Oberon side: Extended Oberon (Oberon-2 2020 Edition — a superset of Oberon-07 adding
   type-bound procedures, FINAL blocks, and safe module unloading). Our additions live in
-  `oberon/`: new modules as `<Name>.Mod` (LF text — currently `Agent.Mod`), modifications
+  `oberon/`: new modules as `<Name>.Mod` (LF text — currently `Puck.Mod`), modifications
   to upstream modules as `<Name>.Mod.patch` (unified diffs against the EO source —
-  currently `Oberon.Mod.patch`, which adds the boot-time `Modules.Load("Agent", ...)`).
-  Host proxy: Python, in `python/` (a `uv` project; package `pucxy`).
+  currently `Oberon.Mod.patch`, which adds the boot-time `Modules.Load("Puck", ...)`).
+  Host proxy: Python, in `python/` (a `uv` project; package `puck`).
 - Vendored upstream (git submodules, in `vendor/`):
   - `vendor/risc-emu/` — Rust port of the RISC5 emulator + host tools (`risc`,
     `build-eo-image`, `extract-source`, `ob2txt`/`txt2ob`, …).
@@ -48,7 +48,7 @@ The toplevel `Makefile` drives everything; from a fresh `git clone --recurse-sub
 - `make image` — assemble `build/src/` (copy `build/eo/.`, apply `oberon/*.patch` via
   `ob2txt`/`patch`/`txt2ob` roundtrip, drop in `oberon/*.Mod` converted to CR), then
   `build-eo-image build/src build/puck.dsk`.
-- `make oberon` / `make agent` — run the emulator / pucxy against `/tmp/p.in`+`/tmp/p.out`
+- `make oberon` / `make agent` — run the emulator / puck against `/tmp/p.in`+`/tmp/p.out`
   (override with `FIFO_IN=` / `FIFO_OUT=`); both tee a timestamped log into `log/`.
 - `make clean` — `rm -rf build`.   `make distclean` — also wipes the cargo target dir.
 

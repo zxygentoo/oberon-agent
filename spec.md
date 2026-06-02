@@ -45,33 +45,34 @@ plus host tools (`vendor/risc-emu/`).
   compiles. Kept as the **host-side ground-truth compile / image-rebuild path** (bootstrap
   escape + rollback), *not* as the executor.
 - **Memory.** `--mem MEGS` lifts the 1 MB default (fixed memory-map ceiling, unverified).
-  Not a Phase-1 concern (the host holds the conversation).
+  Not a concern in the current design (the host holds the conversation).
 
-## 3. Decisions & phasing (locked 2026-05-28)
+## 3. Decisions (locked 2026-05-28)
 
-- **Execution = Model A:** live PO2013 + a serial `Agent.Mod` server (persistent,
+- **Execution = Model A:** live PO2013 + a serial `Puck.Mod` server (persistent,
   self-modifying) — not the Norebo one-shot model.
-- **Two phases:** (1) tools on Oberon, agent loop on the **host**; (2) move the loop into
-  Oberon (the romance / stretch). The host proxy never goes away — it always owns HTTPS +
-  JSON, and the same wire format serves both phases (Phase 1 carries tool-calls; Phase 2
-  carries LLM request/response). Beyond both: compiler-toolchain self-modification.
+- **Loop on the host.** The agent loop runs in the Python proxy; Oberon stays a request/
+  response server. Moving the loop on-device was floated as a "romance" stretch and
+  dropped: as long as the proxy already owns HTTPS + JSON, doing more work on Oberon adds
+  complexity and reliability cost for very little payoff. The proxy console is a feature,
+  not just glue. Beyond the current design: compiler-toolchain self-modification.
 - **Oberon never parses JSON:** a custom wire format crosses the serial line; the proxy
   translates it ⇄ JSON.
 - **Languages:** Oberon-07 on the device; **Python** proxy for now (revisit a Rust/TS/JS
-  port after Phase 2), `uv`-managed with thin deps (`openai` + `rich`; see §4.6). A future
+  port later), `uv`-managed with thin deps (`openai` + `rich`; see §4.6). A future
   imaging/storage layer (rollback/history) would be Rust or Zig, decided later, independent
   of the proxy.
 - **Edit semantics:** `edit_file` = str_replace (proxy-side: GET fresh → replace → PUT);
   `write_file` for create/overwrite.
 
-## 4. Phase 1 system design
+## 4. System design
 
-**Execution = Model A:** live PO2013 + a serial `Agent.Mod` server. Persistent, stateful,
+**Execution = Model A:** live PO2013 + a serial `Puck.Mod` server. Persistent, stateful,
 self-modifying.
 
 **Two surfaces, bridged by the proxy:**
 - *Wire protocol (Oberon ↔ proxy):* minimal, dumb, robust — three ops `PUT` / `GET` / `CALL`.
-- *Agent API (proxy ↔ LLM):* rich, explicit, named tools with structured results.
+- *Puck API (proxy ↔ LLM):* rich, explicit, named tools with structured results.
 
 Everything below is grounded in the Oberon sources and validated against `build-eo-image`
 (see §6). Source line:col references are to `build/eo/`.
@@ -106,7 +107,7 @@ PROCEDURE Send(x: BYTE);     BEGIN REPEAT UNTIL SYSTEM.BIT(stat, 1); SYSTEM.PUT(
 
 ### 4.2 Wire protocol (framing)
 
-Host is master: it writes one complete **REQUEST**, then reads one **RESPONSE**. The Agent
+Host is master: it writes one complete **REQUEST**, then reads one **RESPONSE**. The Puck
 task — polled by `Oberon.Loop` — begins reading when `stat` bit 0 is set, then reads the
 whole frame.
 
@@ -139,7 +140,7 @@ RESPONSE
 ```
 
 The `sync` bytes (`0A5H` request, `05AH` response) let either side detect a desync and act
-as a 1-byte version tag for later. If the Agent reads a first byte that is not `0A5H` it is
+as a 1-byte version tag for later. If the Puck reads a first byte that is not `0A5H` it is
 out of frame → it drains rx until idle and waits for the next `0A5H`.
 
 **`status` ← `Oberon.Call`'s `res`** (res codes are authoritative in `Modules.Mod`; note the
@@ -170,9 +171,9 @@ beg := Oberon.Log.len; Oberon.Call(cmd, res); end := Oberon.Log.len;
 Texts.OpenReader(R, Oberon.Log, beg);
 WHILE Texts.Pos(R) < end DO Texts.Read(R, ch); Send(ORD(ch)) END
 ```
-(The Log grows unbounded; if it gets large the Agent may `Texts.Delete(Oberon.Log, 0, len, buf)` between turns.)
+(The Log grows unbounded; if it gets large the Puck may `Texts.Delete(Oberon.Log, 0, len, buf)` between turns.)
 
-### 4.3 Agent tools (proxy ↔ LLM)
+### 4.3 Puck tools (proxy ↔ LLM)
 
 Rich, explicit, named — the proxy implements each on top of the three wire ops. Collapsing
 to one generic verb is explicitly *not* a goal.
@@ -183,11 +184,11 @@ to one generic verb is explicitly *not* a goal.
 | `write_file` | `path, content` | `{ok}` | LF→CR; PUT plain ASCII (create/overwrite) | PUT |
 | `edit_file` | `path, old, new` | `{ok, replaced}` / not_unique / not_found | GET fresh → str_replace (must be unique) → PUT | GET+PUT |
 | `delete_file` | `path` | `{ok}` / not_found | CALL `System.DeleteFiles`; parse Log (`… deleting`/` failed`) | CALL |
-| `list_files` | `[prefix]` | `{files:[{name,size,date}]}` | CALL `Agent.ListFiles`; parse Log lines | CALL |
+| `list_files` | `[prefix]` | `{files:[{name,size,date}]}` | CALL `Puck.ListFiles`; parse Log lines | CALL |
 | `compile` | `name, [new_symbol]` | `{output}` (raw compiler Log) | CALL `ORP.Compile <name>[/s]`; return Log text | CALL |
-| `load_module` | `name` | `{ok, res}` | CALL `Agent.Load`; parse Log/status | CALL |
+| `load_module` | `name` | `{ok, res}` | CALL `Puck.Load`; parse Log/status | CALL |
 | `unload_module` | `name` | `{ok}` / in_use | CALL `System.Free`; parse Log (` failed` ⇒ refcnt≠0) | CALL |
-| `list_modules` | — | `{modules:[{name,refcnt,code_addr}]}` | CALL `Agent.ListModules`; parse Log | CALL |
+| `list_modules` | — | `{modules:[{name,refcnt,code_addr}]}` | CALL `Puck.ListModules`; parse Log | CALL |
 | `run_command` | `cmd, [args]` | `{ok, res, log}` / trapped | raw CALL (escape hatch) | CALL |
 
 **`compile` returns the raw Oberon Log; the model reads it.** No host-side parsing. We
@@ -224,43 +225,41 @@ module's exported fields read-only to importers; the dummy `Display.Frame` is on
 `SetPar` to derive `Par.vwr`, which our commands ignore). Consequences: params must be **inline** (the
 `^`/selection path needs viewers and won't work headless); commands that read `Oberon.Par.vwr`
 /`.frame` (e.g. `System.Open`, `System.Directory`) are out of scope for `run_command` — which
-is why introspection gets its own Log-writing helpers (`Agent.*`).
+is why introspection gets its own Log-writing helpers (`Puck.*`).
 
-### 4.4 `Agent.Mod` (concrete)
+### 4.4 `Puck.Mod` (concrete)
 
 "PCLink1 grown up": the same byte I/O plus a `PUT`/`GET`/`CALL` dispatcher installed as an
 `Oberon.Task`. It runs *inside* the live system, concurrent with the normal Oberon UI.
-(Implemented in `oberon/Agent.Mod`; compiles clean to 747 B code / 252 B data and is validated
+(Implemented in `oberon/Puck.Mod`; compiles clean to 747 B code / 252 B data and is validated
 live — §7.)
 
-**State (Phase 1 — the server is essentially stateless):**
+**State (the server is essentially stateless):**
 
 ```oberon
-MODULE Agent;
+MODULE Puck;
   IMPORT SYSTEM, Kernel, Files, Modules, Texts, Oberon, FileDir;
   CONST data = -56; stat = -52; sync = 0A5H; rsync = 05AH;
     opPut = 1; opGet = 2; opCall = 3;
     stOk = 0; stNotFound = 1; stTrapped = 2; stError = 3;
   VAR
     T: Oberon.Task;        (* installed dispatcher *)
-    W: Texts.Writer;       (* Log writes for the Agent.* helpers *)
+    W: Texts.Writer;       (* Log writes for the Puck.* helpers *)
     PW: Texts.Writer;      (* builds CALL par-text *)
     par: Texts.Text;       (* reused; holds the current CALL params *)
     name: ARRAY 32 OF CHAR;
 ```
 
-There is **no chat/history state on the device in Phase 1** — the conversation lives on the
-host (proxy). `Agent.Mod` is a request/response server. (Phase-2 on-device state: §4.7.)
+There is **no chat/history state on the device** — the conversation lives on the host
+(proxy). `Puck.Mod` is a request/response server.
 
 **Key API (exported commands):**
 
 | command | role |
 |---|---|
-| `Agent.Run*` | `Oberon.Install(T)` the dispatcher. Called from `Agent`'s module body, so it auto-starts when boot loads `Agent`. |
-| `Agent.Stop*` | `Oberon.Remove(T)`. |
-| `Agent.ListFiles*` | `FileDir.Enumerate(prefix, h)`; handler writes `name⟨tab⟩size⟨tab⟩date` per line to Log. |
-| `Agent.ListModules*` | walk `Modules.root`, skip holes (`name[0]=0X`), write `name⟨tab⟩refcnt⟨tab⟩codeAdr`. |
-| `Agent.Load*` | scan a name from `Oberon.Par`; `Modules.Load(name, m)`; log `loaded <name>` or `load failed res=<n>`. |
+| `Puck.ListFiles*` | `FileDir.Enumerate(prefix, h)`; handler writes `name⟨tab⟩size⟨tab⟩date` per line to Log. |
+| `Puck.ListModules*` | walk `Modules.root`, skip holes (`name[0]=0X`), write `name⟨tab⟩refcnt⟨tab⟩codeAdr`. |
+| `Puck.Load*` | scan a name from `Oberon.Par`; `Modules.Load(name, m)`; log `loaded <name>` or `load failed res=<n>`. |
 
 Internal (not commands): `Rec`/`Send`/`RecInt`/`SendInt`/`RecName`, `DoPut`/`DoGet`/`DoCall`,
 `Task`, and (post-hardening) `Trap`/`ResetKeep`.
@@ -304,9 +303,9 @@ END Task;
 *already-loaded* module if the name is present — it will **not** pick up freshly compiled
 code. To reload a changed module: `unload_module` (`System.Free`, which fails if `refcnt≠0`)
 **then** `load_module`. And a module cannot `Free` *itself* while it is the running task — so
-`Agent.Mod` cannot hot-swap itself from inside; that needs a tiny external relay or a host
-image-rebuild + reboot (§4.6). Phase 1 keeps `Agent.Mod` as stable infrastructure and has the
-agent modify *other* modules.
+`Puck.Mod` cannot hot-swap itself from inside; that needs a tiny external relay or a host
+image-rebuild + reboot (§4.6). The design keeps `Puck.Mod` as stable infrastructure and
+has the agent modify *other* modules.
 
 > **Observed hazard (live):** unloading + reloading a module that the running system still
 > references — an open viewer holding `V.handle` into its code, or a heap object whose type
@@ -322,83 +321,66 @@ agent modify *other* modules.
 > invoked from the viewer's own menu (they test `Oberon.Par.vwr.dsc = Oberon.Par.frame`), so a
 > `CALL` carrying the dummy frame (§4.3) silently no-ops — the viewer stays open and the reload
 > still hangs (observed: `Stars.Close` had no effect, then reload branched into the void). Until
-> an `Agent`-side helper can close a module's viewers directly (find viewers whose `handle`
+> an `Puck`-side helper can close a module's viewers directly (find viewers whose `handle`
 > falls in the module's code range; `Viewers.Close` them), viewer-owning modules can only be
 > replaced by edit + recompile + **reboot** (the new object loads on next use).
 
 ### 4.5 Human interface (a human can drive the agent)
 
-Three concurrent ways in, by design:
+Two ways in, by design:
 
-1. **Host operator console (primary, Phase 1).** The proxy exposes the *same* agent API to a
-   human as to the LLM: an interactive REPL where a person types a task prompt or invokes
-   tools directly, and watches a live transcript (tool calls, tool results, and the raw
-   Oberon Log).
-2. **The Oberon screen itself (free).** Because `Agent.Mod` is just an `Oberon.Task`, the
+1. **Host operator console (primary).** The proxy exposes the *same* agent API to a human
+   as to the LLM: an interactive REPL where a person types a task prompt or invokes tools
+   directly, and watches a live transcript (tool calls, tool results, and the raw Oberon
+   Log).
+2. **The Oberon screen itself (free).** Because `Puck.Mod` is just an `Oberon.Task`, the
    normal Oberon UI keeps working: a human at the emulator window can open files, compile, and
    run commands *alongside* the agent, and read the shared `Oberon.Log`. Good for inspection
    and manual override.
-3. **On-device prompt (Phase 2 direction).** A human types the task into an Oberon viewer/Tool
-   text and a command reads it — the loop-in-Oberon "romance" (§4.7).
 
 ### 4.6 Languages, deployment, safety
 
 - **Languages.** Oberon-07 on the device (in `oberon/`); **Python** proxy (in `python/`, a
-  `uv` project; package `pucxy`). A future imaging/storage layer would be Rust or Zig, decided
+  `uv` project; package `puck`). A future imaging/storage layer would be Rust or Zig, decided
   later, independent of the proxy.
 - **Deployment.** `build-eo-image` compiles every file in the source tree except those its
   `.packonly` lists, ordered by a topological sort of `IMPORT`s — so the top-level `make image`
-  (which assembles `build/eo/.` + `oberon/*.patch` + `oberon/*.Mod`) compiles `Agent.Mod` and
-  bakes `Agent.rsc` into the image. Bring-up is connect-mode: boot the emulator with
-  `--serial-in/out` on two FIFOs, then attach the proxy as a client. **Agent auto-starts at
-  boot** — the patched `Oberon.Mod` loads `Agent` after `System` (`Modules.Load("Agent", …)`),
-  and `Agent`'s module body calls `Run` to install the server task, so no manual step is
-  needed (verified live). (`ResetKeep` trap survival (§5) is still deferred; v1 has no trap
-  handler.)
+  (which assembles `build/eo/.` + `oberon/*.patch` + `oberon/*.Mod`) compiles `Puck.Mod` and
+  bakes `Puck.rsc` into the image. Bring-up is connect-mode: boot the emulator with
+  `--serial-in/out` on two FIFOs, then attach the proxy as a client. **Puck auto-starts at
+  boot** — the patched `Oberon.Mod` loads `Puck` after `System` (`Modules.Load("Puck", …)`),
+  and `Puck`'s module body installs the server task directly, so no manual step is needed
+  (verified live). (`ResetKeep` trap survival (§5) is still deferred; v1 has no trap handler.)
 - **Safety.** Speculative execution on throwaway image copies; host supervisor (serial
   timeout → emulator reset) is the backstop for a hung or trapped server; `build-eo-image` /
   Norebo is the clean-rebuild ground truth and rollback path.
 
-**Dependencies (proxy).** Streaming output matters for a workable console (and lands squarely
-in Phase 2), so the proxy takes a few thin deps rather than hand-rolling SSE + retry/backoff.
+**Dependencies (proxy).** Streaming output matters for a workable console, so the proxy
+takes a few thin deps rather than hand-rolling SSE + retry/backoff.
 
-- *Runtime:* `openai` — LLM client; most providers expose an OpenAI-compatible API (Claude too,
-  via its compatibility endpoint), kept behind a small **`llm_client` seam** so swapping to
-  native `anthropic` (prompt caching / fine-grained streaming) is a one-file change. `rich` —
-  host console: streaming transcript, code/diff highlighting. Optional
-  `python-dotenv` for the API key (else env vars; non-secret config via stdlib `tomllib`).
-  Providers in *thinking* mode (e.g. DeepSeek V4) stream a `reasoning_content` field that must
-  be echoed back in the assistant message each turn — `llm.py` captures and replays it.
+- *Runtime:* `click` — CLI parser + env-var resolution. `openai` — LLM client; most providers
+  expose an OpenAI-compatible API (Claude too, via its compatibility endpoint), kept behind a
+  small **`llm_client` seam** so swapping to native `anthropic` (prompt caching / fine-grained
+  streaming) is a one-file change. `rich` — host console: streaming transcript, code/diff
+  highlighting. Providers in *thinking* mode (e.g. DeepSeek V4) stream a `reasoning_content`
+  field that must be echoed back in the assistant message each turn — `llm.py` captures and
+  replays it.
 - *Tooling, `uv`-managed:* `uv` (project/deps), `ruff` (lint + format, replaces black), `ty`
   (types — Astral, still young; `pyright`/`mypy` the fallback), `pytest` (add `pytest-asyncio`
   only if the loop goes async).
 - *Stdlib — no dep:* serial/PTY (`pty`, `termios`, `os`, `select`/`selectors`), wire framing
   (`struct`), emulator supervision (`subprocess` + watchdog), config (`tomllib`), logging.
-- *Concurrency:* **sync** for Phase 1 — render a stream by iterating the response into
-  `rich.Live`; go async only if the console must stay responsive mid-stream.
+- *Concurrency:* **sync** — render a stream by iterating the response into `rich.Live`;
+  go async only if the console must stay responsive mid-stream.
 
 ```toml
 [project]
 requires-python = ">=3.11"
-dependencies = ["openai", "rich"]     # + "python-dotenv" if using .env
+dependencies = ["click", "openai", "rich"]
 
 [dependency-groups]
 dev = ["pytest", "ruff", "ty"]        # ruff format replaces black
 ```
-
-### 4.7 On-device state (Phase 2 sketch, not Phase 1)
-
-When the loop moves into Oberon, the conversation needs an on-device home. JSON still stays
-host-side; the device stores the wire-level transcript. Likely model: an append-only list of
-messages, each body a `Texts.Text`, persisted to a file for resume across reboots.
-
-```oberon
-TYPE Msg = POINTER TO MsgDesc;
-  MsgDesc = RECORD role: INTEGER; (* user | assistant | tool *) body: Texts.Text; next: Msg END;
-VAR history: Msg;   (* head; append on each turn; serialize to "Agent.Chat" *)
-```
-
-Deferred until Phase 1 works end-to-end.
 
 ## 5. Trap survival (the hard part)
 
@@ -417,7 +399,7 @@ Fix:
   BEGIN IF CurTask.state = active THEN CurTask.state := idle END ;
     SYSTEM.LDREG(14, Kernel.stackOrg); Loop END ResetKeep;
   ```
-- A custom trap handler in `Agent.Mod`, installed via `Kernel.Install(SYSTEM.ADR(Trap), 20H)`
+- A custom trap handler in `Puck.Mod`, installed via `Kernel.Install(SYSTEM.ADR(Trap), 20H)`
   (mirrors `System.Trap`), that: **preserves the `w = 0 → Kernel.New` allocation path** (the
   same handler services every `NEW`, so dropping it breaks all allocation); decodes the trap
   (`u := SYSTEM.REG(15); SYSTEM.GET(u-4, v); w := v DIV 10H MOD 10H`; `pos = v DIV 100H MOD
@@ -466,7 +448,7 @@ It documents the real Log format the model reads, and is how the §7 error-recov
   ints; `edit_file` str_replace (unique-match + not-found + not-unique); tool dispatch over a
   fake device; CR↔LF and `0F1H`-header strip round-trips. Pure Python, fast.
 
-- **Oberon compile checks:** compile `oberon/Agent.Mod` and any patched system modules
+- **Oberon compile checks:** compile `oberon/Puck.Mod` and any patched system modules
   (`Oberon.Mod` with `ResetKeep`) via `build-eo-image` as ground truth — a green image build is
   the gate that the device-side code is well-formed.
 
@@ -511,4 +493,3 @@ Reasonable calls made above, flagged so they're easy to revisit:
   at the cost of files that display wrong in Oberon viewers.
 - **`status` granularity:** compressed `res`→4 codes (§4.2). If the proxy needs the exact
   `res`, prepend a `res:1` byte to CALL payloads instead of widening `status`.
-- **Phase-2 chat store** (§4.7) — deferred until Phase 1 closes.

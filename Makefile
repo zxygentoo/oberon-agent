@@ -122,9 +122,8 @@ agent:
 	@TS=$$(date +%Y%m%d-%H%M%S); ROOT=$$(pwd); LOG=$$ROOT/log/agent-$$TS.log; \
 	RL=$$(command -v rlwrap || true); \
 	echo "logging to $$LOG"; \
-	cd python && $$RL uv run pucxy \
+	cd python && $$RL uv run puck \
 		--serial-in $(FIFO_IN) --serial-out $(FIFO_OUT) \
-		--base-url https://api.deepseek.com --model deepseek-v4-pro \
 		--log "$$LOG"
 
 # --- cleanup -----------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""The Phase-1 agent loop (runs on the host). See spec.md sections 3-4.
+"""The agent loop (runs on the host). See spec.md sections 3-4.
 
 Tool-call loop: ask the model, execute any tool calls against the Oberon system,
 feed results back, repeat until the model stops calling tools.
@@ -6,10 +6,13 @@ feed results back, repeat until the model stops calling tools.
 
 import json
 from dataclasses import dataclass, field
+from typing import TYPE_CHECKING
 
 from . import tools
-from .console import AgentConsole
 from .llm import LLM, LLMError, respond
+
+if TYPE_CHECKING:
+    from .main import AgentConsole
 
 DEFAULT_SYSTEM = """\
 You are puck, a coding agent operating inside a LIVE Extended Oberon system through a set of \
@@ -52,7 +55,7 @@ Be concise. Verify your work by compiling and running."""
 class Agent:
     device: tools.Device
     llm: LLM
-    console: AgentConsole
+    console: "AgentConsole"
     messages: list[dict] = field(default_factory=list)
     max_steps: int = 60
 
@@ -60,7 +63,7 @@ class Agent:
 def make_agent(
     device: tools.Device,
     llm: LLM,
-    console: AgentConsole,
+    console: "AgentConsole",
     system_prompt: str = DEFAULT_SYSTEM,
     max_steps: int = 60,
 ) -> Agent:
