@@ -1,0 +1,6 @@
+[submodule "vendor/risc-emu"]
+	path = vendor/risc-emu
+	url = https://github.com/zxygentoo/oberon-risc-emu-rs.git
+[submodule "vendor/extended-oberon"]
+	path = vendor/extended-oberon
+	url = https://github.com/andreaspirklbauer/Oberon-extended.git
