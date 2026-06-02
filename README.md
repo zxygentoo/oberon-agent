@@ -8,9 +8,10 @@ stretch goal, the compiler toolchain itself). puck is a thin host-side proxy tha
 Oberon's serial line to an LLM, plus a small Oberon-side server that exposes the system
 as agent tools.
 
-**Status:** Phase 1 working — the host-side agent loop drives a live Extended Oberon
-image over a FIFO-attached serial line. See [`spec.md`](spec.md) for the design and
-decisions, and [`AGENTS.md`](AGENTS.md) for working notes.
+**Status:** Working — `pucxy` (the host proxy) drives a live Extended Oberon image
+through a set of named tools: read/write/edit/delete files, list files and modules,
+compile, load and (safely) unload modules, plus a `run_command` escape hatch. See
+[`spec.md`](spec.md) for the design and [`AGENTS.md`](AGENTS.md) for working notes.
 
 ## How it fits together
 
@@ -18,9 +19,10 @@ decisions, and [`AGENTS.md`](AGENTS.md) for working notes.
 LLM  <-HTTPS/JSON->  host proxy (Python)  <-RS232 wire protocol->  Agent.Mod on Oberon
 ```
 
-The serial line is the only channel out of the emulated machine. The proxy owns HTTPS and
-JSON; the Oberon side stays a small, dumb server. Phase 1 runs the agent loop on the host;
-Phase 2 (stretch) moves it into Oberon.
+The serial line is the only channel out of the emulated machine. The host proxy owns
+HTTPS and JSON; the Oberon side stays a small, dumb server speaking three wire ops
+(`PUT`/`GET`/`CALL`). The agent loop runs on the host, exposing the wire ops as
+explicit, named tools to the LLM.
 
 ## Quick start
 
@@ -51,7 +53,7 @@ make agent                                    # drives pucxy against the running
 - `vendor/extended-oberon/` — submodule: Andreas Pirklbauer's Extended Oberon
   distribution (we extract source from `Documentation/S3RISCinstall.tar.gz`).
 - `README.md`, `AGENTS.md` — committed docs (`CLAUDE.md` symlinks to `AGENTS.md`).
-- `spec.md` — the authoritative design doc (research findings, decisions, phasing).
+- `spec.md` — the authoritative design doc (research findings, decisions, system design).
 - `build/` — generated tree (gitignored): `eo-stock.dsk`, `eo/`, `src/`, `wip/`, `puck.dsk`.
 - `log/` — session logs (emulator + pucxy), gitignored.
 

@@ -16,7 +16,7 @@ uv run pucxy --help
 Layout: `src/pucxy/` (package), `tests/` (unit tests). The image is built from the repo
 root with `make image` (see below).
 
-## Bring-up (Phase 1)
+## Bring-up
 
 The emulator is a long-lived GUI process; the proxy is a client that connects to its
 serial line. Run them **separately** — boot once (Agent auto-starts), then drive as
@@ -64,6 +64,6 @@ often as you like (no reboot per task).
    `deepseek-v4-flash` is cheaper; both V4 models support tool calls.
    (`deepseek-chat`/`deepseek-reasoner` are deprecated aliases, retire 2026-07-24.)
 
-The proxy is a client — it never boots the emulator. Run `bin/risc` yourself (step 2)
+The proxy is a client — it never boots the emulator. Run the emulator yourself (step 2)
 and the proxy attaches to its serial line.
 

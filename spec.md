@@ -14,8 +14,8 @@ property.
 
 ## 2. Key research findings
 
-Grounded in the PO2013 reference sources (`po2013/`) and the Rust emulator / host tools
-(`../oberon-risc-emu-rs`, built into `bin/`).
+Grounded in the Oberon reference sources (now under `build/eo/`) and the Rust emulator
+plus host tools (`vendor/risc-emu/`).
 
 - **Channel.** The emulator does not emulate the network, so the **serial line is the only
   I/O channel** out of Oberon: `RS232 ↔ host proxy ↔ HTTPS ↔ LLM`.
@@ -41,7 +41,7 @@ Grounded in the PO2013 reference sources (`po2013/`) and the Rust emulator / hos
   does *not* help (one-shot per process; it SysReqs the host and halts) — only its
   trap-*decode* prologue is reusable. COMPILE itself is safe (errors are logged, not trapped).
 - **Norebo / SysReq (alternative model, exists).** Norebo runs headless one-shot commands
-  with a host-syscall ABI (host-mediated Files, Log over RS232); it's how `build-image`
+  with a host-syscall ABI (host-mediated Files, Log over RS232); it's how `build-eo-image`
   compiles. Kept as the **host-side ground-truth compile / image-rebuild path** (bootstrap
   escape + rollback), *not* as the executor.
 - **Memory.** `--mem MEGS` lifts the 1 MB default (fixed memory-map ceiling, unverified).
@@ -73,8 +73,8 @@ self-modifying.
 - *Wire protocol (Oberon ↔ proxy):* minimal, dumb, robust — three ops `PUT` / `GET` / `CALL`.
 - *Agent API (proxy ↔ LLM):* rich, explicit, named tools with structured results.
 
-Everything below is grounded in the PO2013 sources and validated against `bin/build-image`
-(see §6). Source line:col references are to `po2013/`.
+Everything below is grounded in the Oberon sources and validated against `build-eo-image`
+(see §6). Source line:col references are to `build/eo/`.
 
 ### 4.1 Serial byte layer (Oberon ↔ host)
 
@@ -194,7 +194,7 @@ to one generic verb is explicitly *not* a goal.
 *validated* (§7) that the model recovers straight from the raw compiler output — it already
 holds the source it wrote/read, and the terse message names the construct — so the
 offset→line:col mapping we'd planned proved unnecessary and was dropped. Real output, captured
-via `build-image` (§6):
+via `build-eo-image` (§6):
 
 ```
   compiling Stars            <- "  compiling <Mod>"
@@ -331,7 +331,7 @@ agent modify *other* modules.
 Three concurrent ways in, by design:
 
 1. **Host operator console (primary, Phase 1).** The proxy exposes the *same* agent API to a
-   human as to the LLM: an interactive REPL/TUI (`--interactive`) where a person types a task
+   human as to the LLM: an interactive REPL where a person types a task
    prompt or invokes tools directly, watches a live transcript (tool calls, tool results, and
    the raw Oberon Log), and can run in **step/approve mode** — each tool call (especially
    destructive ones: `delete_file`, `unload_module`, raw `run_command`) pauses for approval.
@@ -348,16 +348,17 @@ Three concurrent ways in, by design:
 - **Languages.** Oberon-07 on the device (in `oberon/`); **Python** proxy (in `python/`, a
   `uv` project; package `pucxy`). A future imaging/storage layer would be Rust or Zig, decided
   later, independent of the proxy.
-- **Deployment.** `build-image` compiles every file in the source tree except those its
+- **Deployment.** `build-eo-image` compiles every file in the source tree except those its
   `.packonly` lists, ordered by a topological sort of `IMPORT`s — so the top-level `make image`
-  (which assembles `po2013/` + `oberon/*.Mod`) compiles `Agent.Mod` and bakes `Agent.rsc`
-  into the image. Bring-up is connect-mode: boot `bin/risc` with `--serial-in/out` on two FIFOs,
-  then attach the proxy as a client. **Agent auto-starts at boot** — the patched `Oberon.Mod`
-  loads `Agent` after `System` (`Modules.Load("Agent", …)`), and `Agent`'s module body calls
-  `Run` to install the server task, so no manual step is needed (verified live). (`ResetKeep`
-  trap survival (§5) is still deferred; v1 has no trap handler.)
+  (which assembles `build/eo/.` + `oberon/*.patch` + `oberon/*.Mod`) compiles `Agent.Mod` and
+  bakes `Agent.rsc` into the image. Bring-up is connect-mode: boot the emulator with
+  `--serial-in/out` on two FIFOs, then attach the proxy as a client. **Agent auto-starts at
+  boot** — the patched `Oberon.Mod` loads `Agent` after `System` (`Modules.Load("Agent", …)`),
+  and `Agent`'s module body calls `Run` to install the server task, so no manual step is
+  needed (verified live). (`ResetKeep` trap survival (§5) is still deferred; v1 has no trap
+  handler.)
 - **Safety.** Speculative execution on throwaway image copies; host supervisor (serial
-  timeout → emulator reset) is the backstop for a hung or trapped server; `build-image` /
+  timeout → emulator reset) is the backstop for a hung or trapped server; `build-eo-image` /
   Norebo is the clean-rebuild ground truth and rollback path; step/approve mode (§4.5) gates
   destructive tools.
 
@@ -440,12 +441,12 @@ small variation, not a true longjmp, but it **needs validation on the emulator**
 
 ## 6. Testing methodology
 
-**We can elicit real compiler diagnostics today, with no emulator boot,** via `bin/build-image`
+**We can elicit real compiler diagnostics today, with no emulator boot,** via `build-eo-image`
 — the shim routes Oberon's Log to host stdout, so a build surfaces verbatim `ORP`/`ORS` output.
 It documents the real Log format the model reads, and is how the §7 error-recovery test was set up.
 
 - **Compile-diagnostic fixtures.** Recipe: drop a deliberately broken module into the source
-  tree (or break an existing one) and run `build-image` — it compiles every non-`.packonly`
+  tree (or break an existing one) and run `build-eo-image` — it compiles every non-`.packonly`
   file (topologically ordered) and prints the real `ORS` diagnostics to stdout. Whole-image
   build ≈ 2 s. (We no longer parse these host-side — `compile` returns the Log verbatim — but
   the recipe still surfaces the real format and seeds error-recovery scenarios.)
@@ -469,7 +470,7 @@ It documents the real Log format the model reads, and is how the §7 error-recov
   fake device; CR↔LF and `0F1H`-header strip round-trips. Pure Python, fast.
 
 - **Oberon compile checks:** compile `oberon/Agent.Mod` and any patched system modules
-  (`Oberon.Mod` with `ResetKeep`) via `build-image` as ground truth — a green image build is
+  (`Oberon.Mod` with `ResetKeep`) via `build-eo-image` as ground truth — a green image build is
   the gate that the device-side code is well-formed.
 
 - **Integration:** boot the custom image + proxy over a PTY (or two FIFOs); exercise the wire
