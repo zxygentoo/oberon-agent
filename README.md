@@ -33,6 +33,8 @@ for the Python proxy, and standard Unix tools (`make`, `tar`, `patch`). `rlwrap`
 ```
 git clone --recurse-submodules https://github.com/zxygentoo/puck.git
 cd puck
+# if cloned without --recurse-submodules, run:
+#   git submodule update --init --recursive
 make image                                    # builds tools + extracts EO + puck.dsk
 
 mkfifo /tmp/p.in /tmp/p.out                   # once
