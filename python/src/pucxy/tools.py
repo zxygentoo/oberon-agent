@@ -9,28 +9,28 @@ import re
 from collections.abc import Callable
 from typing import TypeAlias
 
-from . import wire
+from . import protocol
 from .text import from_oberon, to_oberon
 
-Device: TypeAlias = Callable[[bytes], wire.Response]
+Device: TypeAlias = Callable[[bytes], protocol.Response]
 
 
 # --- files ---
 
 
 def read_file(t: Device, path: str) -> dict:
-    r = t(wire.build_get(path))
-    if r.status == wire.ST_NOT_FOUND:
+    r = t(protocol.build_get(path))
+    if r.status == protocol.ST_NOT_FOUND:
         return {"error": "not_found", "path": path}
     if not r.ok:
-        return {"error": wire.STATUS_NAMES.get(r.status, "error")}
+        return {"error": protocol.STATUS_NAMES.get(r.status, "error")}
     return {"content": from_oberon(r.payload)}
 
 
 def write_file(t: Device, path: str, content: str) -> dict:
-    r = t(wire.build_put(path, to_oberon(content)))
+    r = t(protocol.build_put(path, to_oberon(content)))
     if not r.ok:
-        return {"error": wire.STATUS_NAMES.get(r.status, "error")}
+        return {"error": protocol.STATUS_NAMES.get(r.status, "error")}
     return {"ok": True, "path": path, "bytes": len(content)}
 
 
@@ -115,14 +115,14 @@ def compile_module(t: Device, name: str, new_symbol: bool = False) -> dict:
     # Returns the raw Oberon.Log delta; the model reads diagnostics / the success
     # line directly (offset->line mapping proved unnecessary — see spec.md section 7).
     par = name + ("/s" if new_symbol else "")
-    r = t(wire.build_call("ORP.Compile", to_oberon(par)))
+    r = t(protocol.build_call("ORP.Compile", to_oberon(par)))
     return {"output": from_oberon(r.payload)}
 
 
 def run_command(t: Device, cmd: str, args: str = "") -> dict:
-    r = t(wire.build_call(cmd, to_oberon(args)))
+    r = t(protocol.build_call(cmd, to_oberon(args)))
     return {
-        "status": wire.STATUS_NAMES.get(r.status, str(r.status)),
+        "status": protocol.STATUS_NAMES.get(r.status, str(r.status)),
         "ok": r.ok,
         "log": from_oberon(r.payload),
     }
@@ -159,7 +159,7 @@ def dispatch(t: Device, name: str, args: dict) -> dict:
 
 
 def _call_log(t: Device, cmd: str, args: str) -> str:
-    return from_oberon(t(wire.build_call(cmd, to_oberon(args))).payload)
+    return from_oberon(t(protocol.build_call(cmd, to_oberon(args))).payload)
 
 
 def _split_tabular(text: str) -> list[list[str]]:

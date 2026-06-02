@@ -10,7 +10,7 @@ import select
 import tty
 from dataclasses import dataclass
 
-from .wire import Response, read_response
+from .protocol import Response, read_response
 
 
 class TransportError(Exception):
