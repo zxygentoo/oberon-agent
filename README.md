@@ -26,6 +26,10 @@ explicit, named tools to the LLM.
 
 ## Quick start
 
+Prereqs: a Rust toolchain (`cargo`) for the emulator + host tools, [`uv`](https://docs.astral.sh/uv/)
+for the Python proxy, and standard Unix tools (`make`, `tar`, `patch`). `rlwrap` is used by
+`make agent` if present (optional — readline in the REPL).
+
 ```
 git clone --recurse-submodules https://github.com/zxygentoo/puck.git
 cd puck

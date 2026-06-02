@@ -41,7 +41,7 @@ NEW_MODS    := $(wildcard oberon/*.Mod)
 
 image: $(IMAGE)
 
-$(IMAGE): tools eo-source $(PATCHES) $(NEW_MODS)
+$(IMAGE): $(RISC) $(EO_SRC)/.stamp $(PATCHES) $(NEW_MODS)
 	@rm -rf build/src && mkdir -p build/src
 	cp -a $(EO_SRC)/. build/src/
 	@for p in $(PATCHES); do \
@@ -83,7 +83,7 @@ $(EO_SRC)/.stamp: $(EO_TARBALL) | tools
 # `make patches` regenerates oberon/*.patch by diffing build/wip/ against build/eo/
 #                (only writing patches for files that actually differ).
 
-wip: eo-source $(PATCHES)
+wip: $(EO_SRC)/.stamp $(PATCHES)
 	@rm -rf build/wip && mkdir -p build/wip
 	cp -a $(EO_SRC)/. build/wip/
 	@for p in $(PATCHES); do \
@@ -120,8 +120,9 @@ oberon: $(IMAGE)
 agent:
 	@mkdir -p log
 	@TS=$$(date +%Y%m%d-%H%M%S); ROOT=$$(pwd); LOG=$$ROOT/log/agent-$$TS.log; \
+	RL=$$(command -v rlwrap || true); \
 	echo "logging to $$LOG"; \
-	cd python && rlwrap uv run pucxy \
+	cd python && $$RL uv run pucxy \
 		--serial-in $(FIFO_IN) --serial-out $(FIFO_OUT) \
 		--base-url https://api.deepseek.com --model deepseek-v4-pro \
 		--log "$$LOG"
