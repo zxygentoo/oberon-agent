@@ -1,6 +1,6 @@
 """pucxy command line. See spec.md sections 4.5-4.6.
 
-  pucxy [conn] [--model M] [--approve] ["task"]   # drive the agent (needs an LLM key)
+  pucxy [conn] [--model M] ["task"]   # drive the agent (needs an LLM key)
 
 Connection [conn] attaches to an already-running emulator's serial line:
   --serial PATH                  an existing serial device / PTY slave
@@ -44,7 +44,6 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument(
         "--api-key", default=None, help="LLM API key (else $PUCXY_API_KEY or $OPENAI_API_KEY)"
     )
-    p.add_argument("--approve", action="store_true", help="confirm destructive tool calls")
     p.add_argument("--log", help="append a plain-text transcript of this session to FILE")
     p.add_argument("task", nargs="?", help="task prompt; omit for an interactive session")
     return p.parse_args(argv)
@@ -52,7 +51,7 @@ def _parse_args(argv: list[str] | None) -> argparse.Namespace:
 
 def _run(args: argparse.Namespace) -> int:
     t = _connect(args)
-    console = AgentConsole(approve=args.approve, log_path=args.log)
+    console = AgentConsole(log_path=args.log)
     try:
         llm = make_llm(args.model, base_url=args.base_url, api_key=args.api_key)
         agent = make_agent(partial(tp.request, t), llm, console)

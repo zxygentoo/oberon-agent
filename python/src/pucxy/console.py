@@ -1,8 +1,8 @@
 """Human operator console + optional transcript logger. See spec.md section 4.5.
 
-Renders a live transcript (assistant text, tool calls/results) and, in approve
-mode, gates destructive tool calls. With --log, also mirrors every event to a
-plain-text transcript file for offline iteration / crash inspection.
+Renders a live transcript (assistant text, tool calls/results). With --log, also
+mirrors every event to a plain-text transcript file for offline iteration /
+crash inspection.
 """
 
 import json
@@ -10,15 +10,13 @@ from datetime import datetime
 from typing import IO
 
 from rich.console import Console
-from rich.prompt import Confirm
 
 
 class AgentConsole:
     """Owns the live terminal + (optional) transcript log file."""
 
-    def __init__(self, approve: bool = False, log_path: str | None = None):
+    def __init__(self, log_path: str | None = None):
         self.c = Console()
-        self.approve = approve
         self._streaming = False
         self._asst_buf: list[str] = []
         self._log: IO[str] | None = None
@@ -52,11 +50,6 @@ class AgentConsole:
     def tool_result(self, name: str, result: dict) -> None:
         self._write(f"TOOL_RESULT {name}", json.dumps(result, default=str, ensure_ascii=False))
         _render_tool_result(self.c, result)
-
-    def confirm(self, name: str, args: dict, destructive: bool = False) -> bool:
-        if not (self.approve and destructive):
-            return True
-        return Confirm.ask(f"  run [bold]{name}[/] [dim]{_short(args)}[/]?", default=True)
 
     def info(self, text: str) -> None:
         self.c.print(text)

@@ -331,11 +331,9 @@ agent modify *other* modules.
 Three concurrent ways in, by design:
 
 1. **Host operator console (primary, Phase 1).** The proxy exposes the *same* agent API to a
-   human as to the LLM: an interactive REPL where a person types a task
-   prompt or invokes tools directly, watches a live transcript (tool calls, tool results, and
-   the raw Oberon Log), and can run in **step/approve mode** — each tool call (especially
-   destructive ones: `delete_file`, `unload_module`, raw `run_command`) pauses for approval.
-   This doubles as the §4.6 safety surface.
+   human as to the LLM: an interactive REPL where a person types a task prompt or invokes
+   tools directly, and watches a live transcript (tool calls, tool results, and the raw
+   Oberon Log).
 2. **The Oberon screen itself (free).** Because `Agent.Mod` is just an `Oberon.Task`, the
    normal Oberon UI keeps working: a human at the emulator window can open files, compile, and
    run commands *alongside* the agent, and read the shared `Oberon.Log`. Good for inspection
@@ -359,8 +357,7 @@ Three concurrent ways in, by design:
   handler.)
 - **Safety.** Speculative execution on throwaway image copies; host supervisor (serial
   timeout → emulator reset) is the backstop for a hung or trapped server; `build-eo-image` /
-  Norebo is the clean-rebuild ground truth and rollback path; step/approve mode (§4.5) gates
-  destructive tools.
+  Norebo is the clean-rebuild ground truth and rollback path.
 
 **Dependencies (proxy).** Streaming output matters for a workable console (and lands squarely
 in Phase 2), so the proxy takes a few thin deps rather than hand-rolling SSE + retry/backoff.
@@ -368,7 +365,7 @@ in Phase 2), so the proxy takes a few thin deps rather than hand-rolling SSE + r
 - *Runtime:* `openai` — LLM client; most providers expose an OpenAI-compatible API (Claude too,
   via its compatibility endpoint), kept behind a small **`llm_client` seam** so swapping to
   native `anthropic` (prompt caching / fine-grained streaming) is a one-file change. `rich` —
-  host console: streaming transcript, code/diff highlighting, step/approve prompts. Optional
+  host console: streaming transcript, code/diff highlighting. Optional
   `python-dotenv` for the API key (else env vars; non-secret config via stdlib `tomllib`).
   Providers in *thinking* mode (e.g. DeepSeek V4) stream a `reasoning_content` field that must
   be echoed back in the assistant message each turn — `llm.py` captures and replays it.

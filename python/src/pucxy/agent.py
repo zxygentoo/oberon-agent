@@ -47,8 +47,6 @@ file reads as only a one-line summary. So DO print a file's content when the ope
 see it; don't re-echo logs or command output the console already shows.
 Be concise. Verify your work by compiling and running."""
 
-DESTRUCTIVE = frozenset({"delete_file", "unload_module", "run_command"})
-
 
 @dataclass
 class Agent:
@@ -117,11 +115,8 @@ def _run_tool(agent: Agent, tc: dict) -> dict:
 
 
 def _execute_tool(agent: Agent, name: str, args: dict) -> dict:
-    """Print the call, confirm if destructive, dispatch, print the result."""
+    """Print the call, dispatch, print the result."""
     agent.console.tool_call(name, args)
-    if not agent.console.confirm(name, args, destructive=name in DESTRUCTIVE):
-        result: dict = {"error": "denied by operator"}
-    else:
-        result = tools.dispatch(agent.device, name, args)
+    result = tools.dispatch(agent.device, name, args)
     agent.console.tool_result(name, result)
     return result
