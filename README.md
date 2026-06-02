@@ -22,36 +22,38 @@ The serial line is the only channel out of the emulated machine. The proxy owns 
 JSON; the Oberon side stays a small, dumb server. Phase 1 runs the agent loop on the host;
 Phase 2 (stretch) moves it into Oberon.
 
+## Quick start
+
+```
+git clone --recurse-submodules https://github.com/zxygentoo/puck.git
+cd puck
+make image                                    # builds tools + extracts EO + puck.dsk
+
+mkfifo /tmp/p.in /tmp/p.out                   # once
+make oberon                                   # runs the emulator (GUI)
+
+# in another shell:
+export PUCXY_API_KEY=...
+make agent                                    # drives pucxy against the running emu
+```
+
 ## Repo layout
 
-- `oberon/` — our Oberon-2 / EO source: `Agent.Mod` (the wire endpoint) and a patched
-  `Oberon.Mod` (loads Agent at boot); both override their EO upstream counterparts when
-  the image is built.
+- `oberon/` — our additions to Extended Oberon. New modules live as `<Name>.Mod`
+  (currently `Agent.Mod` — the wire endpoint); modifications to upstream modules live as
+  `<Name>.Mod.patch` unified diffs against EO (currently `Oberon.Mod.patch` — loads Agent
+  at boot).
 - `python/` — the Python host proxy: its own `uv` project (`src/pucxy/`, `tests/`, `pyproject.toml`).
 - `Makefile` — `make image` (build the disk), `make oberon` (run the emulator),
-  `make agent` (drive pucxy against the running emulator).
+  `make agent` (drive pucxy against the running emulator); plus `tools`, `eo-source`,
+  `wip`, `patches`, `clean`, `distclean` — see the file or `AGENTS.md`.
+- `vendor/risc-emu/` — submodule: Rust port of the RISC5 emulator + host tools.
+- `vendor/extended-oberon/` — submodule: Andreas Pirklbauer's Extended Oberon
+  distribution (we extract source from `Documentation/S3RISCinstall.tar.gz`).
 - `README.md`, `AGENTS.md` — committed docs (`CLAUDE.md` symlinks to `AGENTS.md`).
 - `spec.md` — the authoritative design doc (research findings, decisions, phasing).
-- `eo/` — Extended Oberon source (gitignored).
-- `po2013/` — Project Oberon 2013 reference source (gitignored).
-- `book/` — Project Oberon book PDFs (gitignored).
-- `bin/` — host tools: `risc` (RISC5 emulator), `build-eo-image` / `build-image`,
-  `extract-source`, `ob2unix` / `ob2txt` / `txt2ob` (gitignored).
-- `build/`, `log/` — local build outputs and session logs (gitignored).
-
-## Dependencies / context
-
-- **Extended Oberon source** — `eo/` (the running system: ORP/ORG/ORB/ORS compiler,
-  Modules with safe-unload, Files, Texts, Viewers, …). Built on top of PO2013.
-- **PO2013 reference** — `po2013/` (the original sources) and `book/` (the Project Oberon
-  book: PO.System, PO.Computer, PO.Applications, Oberon07.Report, UsingOberon, PIO).
-- **Emulator & tools** — `bin/risc` (the RISC5 emulator) and `bin/build-eo-image`
-  (headless EO compiler / image builder), built from the sibling repo
-  `../oberon-risc-emu-rs`. Raw serial via `--serial-in`/`--serial-out` (Unix); `--mem`
-  for RAM. The wireless network is not emulated.
-
-> `eo/`, `po2013/`, `book/`, `bin/`, `build/`, and `log/` are reference / vendored /
-> built / generated material — gitignored and populated locally.
+- `build/` — generated tree (gitignored): `eo-stock.dsk`, `eo/`, `src/`, `wip/`, `puck.dsk`.
+- `log/` — session logs (emulator + pucxy), gitignored.
 
 ## License
 

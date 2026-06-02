@@ -22,14 +22,47 @@ authoritative design, research findings, and locked decisions.
 
 - Oberon side: Extended Oberon (Oberon-2 2020 Edition — a superset of Oberon-07 adding
   type-bound procedures, FINAL blocks, and safe module unloading). Our additions live in
-  `oberon/`: `Agent.Mod` (the wire endpoint) and a patched `Oberon.Mod` that loads it at
-  boot; both override their EO upstream counterparts when the image is built. Host proxy:
-  Python, in `python/` (a `uv` project; package `pucxy`).
-- Reference material (gitignored, local): Extended Oberon source in `eo/`, PO2013 source
-  in `po2013/`, the book in `book/`, the host tools in `bin/` (`risc`, `build-eo-image`,
-  `build-image`, `ob2unix`, `extract-source`, …). Local build outputs go to `build/`;
-  session logs (emulator + pucxy) to `log/`.
-- *(more as they emerge)*
+  `oberon/`: new modules as `<Name>.Mod` (LF text — currently `Agent.Mod`), modifications
+  to upstream modules as `<Name>.Mod.patch` (unified diffs against the EO source —
+  currently `Oberon.Mod.patch`, which adds the boot-time `Modules.Load("Agent", ...)`).
+  Host proxy: Python, in `python/` (a `uv` project; package `pucxy`).
+- Vendored upstream (git submodules, in `vendor/`):
+  - `vendor/risc-emu/` — Rust port of the RISC5 emulator + host tools (`risc`,
+    `build-eo-image`, `extract-source`, `ob2txt`/`txt2ob`, …).
+  - `vendor/extended-oberon/` — Andreas Pirklbauer's Extended Oberon distribution;
+    `Documentation/S3RISCinstall.tar.gz` is the stock disk image we extract source from.
+- Build outputs (gitignored, under `build/`): `eo-stock.dsk` (the stock EO image),
+  `eo/` (source extracted from it), `src/` (assembled tree = `eo/.` + patches applied +
+  our `*.Mod` dropped in), `puck.dsk` (the final bootable image), and `wip/` (the
+  editable patched-upstream tree used by `make patches`).
+- Session logs (gitignored): `log/`.
+
+## Build
+
+The toplevel `Makefile` drives everything; from a fresh `git clone --recurse-submodules`,
+`make image` walks the full chain (`tools` → `eo-source` → `image`).
+
+- `make tools` — `cargo build --release --workspace --bins` inside `vendor/risc-emu/`.
+- `make eo-source` — untar `Documentation/S3RISCinstall.tar.gz`, run `extract-source`
+  on `RISC.img` → `build/eo/`. Idempotent (stamp file).
+- `make image` — assemble `build/src/` (copy `build/eo/.`, apply `oberon/*.patch` via
+  `ob2txt`/`patch`/`txt2ob` roundtrip, drop in `oberon/*.Mod` converted to CR), then
+  `build-eo-image build/src build/puck.dsk`.
+- `make oberon` / `make agent` — run the emulator / pucxy against `/tmp/p.in`+`/tmp/p.out`
+  (override with `FIFO_IN=` / `FIFO_OUT=`); both tee a timestamped log into `log/`.
+- `make clean` — `rm -rf build`.   `make distclean` — also wipes the cargo target dir.
+
+### Editing an upstream module
+
+```
+make wip            # populates build/wip/ = build/eo/. with patches applied
+$EDITOR build/wip/Oberon.Mod
+make patches        # regenerates oberon/Oberon.Mod.patch (only for files that differ)
+make image          # rebuild with the new patch
+```
+
+Patches are stored as **LF unified diffs** (readable in git, easy to review). The build
+roundtrips through `ob2txt`/`txt2ob` so the on-disk module stays in EO's CR format.
 
 ## Style preferences
 

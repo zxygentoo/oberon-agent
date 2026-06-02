@@ -28,17 +28,23 @@ often as you like (no reboot per task).
    make image                                # -> build/puck.dsk
    ```
 
-   `build-eo-image` compiles every file in the source tree except those in its `.packonly`,
-   ordered by a topological sort of `IMPORT`s, so `oberon/Agent.Mod` is compiled (its
-   `Agent.rsc` baked into the image) and our patched `oberon/Oberon.Mod` loads Agent at
-   boot. (`make` assembles `eo/` + `oberon/*.Mod` into one tree; `oberon/` overrides
-   upstream by name.)
+   First time only, this also `cargo build`s the emulator + host tools in
+   `vendor/risc-emu/` and extracts Extended Oberon source from
+   `vendor/extended-oberon/Documentation/S3RISCinstall.tar.gz` into `build/eo/`. The
+   image build then assembles `build/src/` (= `build/eo/.` + `oberon/*.patch` applied +
+   `oberon/*.Mod` dropped in) and hands it to `build-eo-image`. See `AGENTS.md` for the
+   patch edit cycle (`make wip` / `make patches`).
 
 2. Boot the emulator on two FIFOs (from the repo root):
 
    ```
    mkfifo /tmp/p.in /tmp/p.out                 # once
-   ./bin/risc --serial-in /tmp/p.in --serial-out /tmp/p.out build/puck.dsk &
+   make oberon                                 # backgrounds the emulator + tees log/
+   ```
+
+   Or invoke the binary directly:
+   ```
+   ./vendor/risc-emu/target/release/risc --serial-in /tmp/p.in --serial-out /tmp/p.out build/puck.dsk &
    ```
 
    Agent auto-starts at boot (the Oberon log shows `Agent started`) — no manual step.
