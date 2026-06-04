@@ -4,5 +4,5 @@ DiskImage/
 # session logs (emulator)
 log/
 # cargo target dirs (risc-emu submodule, oat)
-vendor/*/target/
+vendor/oberon-risc-emu-rs/target/
 oat/target/

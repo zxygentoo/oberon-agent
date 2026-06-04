@@ -4,14 +4,14 @@
 # Pipeline per variant V (po | eo):
 #   1. tools         -> cargo build the rust emulator + host-tools
 #   2. <v>-source    -> extract source from a stock disk image
-#                       (PO: vendor/risc-emu/DiskImage/Oberon-2020-08-18.dsk
-#                        EO: vendor/extended-oberon/Documentation/S3RISCinstall.tar.gz)
+#                       (PO: vendor/oberon-risc-emu-rs/DiskImage/Oberon-2020-08-18.dsk
+#                        EO: downloaded S3RISCinstall.tar.gz from upstream)
 #   3. <v>-image     -> assemble build/<v>-src/ = source + Mod/<Variant>/ + patches,
 #                       then build-{po,eo}-image -> DiskImage/<Variant>Oberon.dsk
 #
 # `make image` builds both. `make po-image` / `make eo-image` build one each.
 
-EMU         := vendor/risc-emu
+EMU         := vendor/oberon-risc-emu-rs
 BIN         := $(EMU)/target/release
 RISC        := $(BIN)/risc
 BUILD_PO    := $(BIN)/build-po-image
@@ -27,7 +27,10 @@ PO_MOD_DIR  := Mod/ProjectOberon
 PO_PATCHES  := $(wildcard $(PO_MOD_DIR)/*.patch)
 PO_NEW_MODS := $(wildcard $(PO_MOD_DIR)/*.Mod)
 
-EO_TARBALL  := vendor/extended-oberon/Documentation/S3RISCinstall.tar.gz
+# EO stock disk image: downloaded from upstream (not vendored — the full
+# Oberon-extended repo is ~12 MB but we only consume this one file).
+EO_TARBALL_URL := https://github.com/andreaspirklbauer/Oberon-extended/raw/refs/heads/master/Documentation/S3RISCinstall.tar.gz
+EO_TARBALL  := build/S3RISCinstall.tar.gz
 EO_STOCK    := build/eo-stock.dsk
 EO_SRC      := build/eo
 EO_IMAGE    := DiskImage/ExtendedOberon.dsk
@@ -110,6 +113,17 @@ $(EO_SRC)/.stamp: $(EO_TARBALL) | tools
 	$(EXTRACT) $(EO_STOCK) $(EO_SRC)
 	@touch $@
 
+$(EO_TARBALL):
+	@mkdir -p build
+	@echo "downloading $(EO_TARBALL_URL)"
+	@if command -v curl >/dev/null 2>&1; then \
+	  curl -fsSL -o $@ $(EO_TARBALL_URL); \
+	elif command -v wget >/dev/null 2>&1; then \
+	  wget -q -O $@ $(EO_TARBALL_URL); \
+	else \
+	  echo "need curl or wget to fetch the EO stock image" >&2; exit 1; \
+	fi
+
 # --- prerequisites -----------------------------------------------------------
 
 tools: $(RISC)
@@ -141,4 +155,4 @@ clean:
 	rm -rf build DiskImage
 
 distclean: clean
-	rm -rf vendor/risc-emu/target
+	rm -rf vendor/oberon-risc-emu-rs/target

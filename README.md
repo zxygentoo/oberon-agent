@@ -29,12 +29,10 @@ into named subcommands the agent invokes from its prompt.
 See [`skill/oberon-agent/SKILL.md`](skill/oberon-agent/SKILL.md) for the working rules
 and [`AGENTS.md`](AGENTS.md) for contributor notes.
 
-## How the vendored pieces are used
+## Upstream pieces we depend on
 
-Two git submodules under `vendor/`:
-
-**[`vendor/risc-emu/`](https://github.com/zxygentoo/oberon-risc-emu-rs)** — Rust port of
-Wirth's RISC5 emulator and host tools:
+**[`vendor/oberon-risc-emu-rs/`](https://github.com/zxygentoo/oberon-risc-emu-rs)**
+(git submodule) — Rust port of Wirth's RISC5 emulator and host tools:
 
 - `risc` — runs the emulator (the GUI window).
 - `extract-source` — pulls Oberon source out of a stock disk image.
@@ -44,9 +42,10 @@ Wirth's RISC5 emulator and host tools:
   LF text, so patches stay readable in git.
 - `DiskImage/Oberon-2020-08-18.dsk` — the stock PO2013 disk image we extract from.
 
-**[`vendor/extended-oberon/`](https://github.com/andreaspirklbauer/Oberon-extended)** —
-Andreas Pirklbauer's Extended Oberon distribution; `Documentation/S3RISCinstall.tar.gz`
-is the stock EO disk image we extract from.
+**Extended Oberon stock image** — downloaded by `make` (not vendored) from
+[`andreaspirklbauer/Oberon-extended`](https://github.com/andreaspirklbauer/Oberon-extended):
+the single file `Documentation/S3RISCinstall.tar.gz` lands in `build/` and is reused
+across builds. Requires `curl` or `wget`.
 
 ## Layout
 
@@ -66,7 +65,7 @@ Makefile                      `make po-image`, `make eo-image`, `make image` (bo
 ### 1. Prereqs
 
 - Rust toolchain (`cargo`).
-- Standard Unix tools: `make`, `tar`, `patch`.
+- Standard Unix tools: `make`, `tar`, `patch`, `curl` (or `wget`).
 
 ### 2. Clone with submodules
 

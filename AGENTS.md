@@ -33,12 +33,14 @@ working rules.
 - **Skill.** `skill/oberon-agent/SKILL.md` — one file, covers both variants. Branches
   on `oat check`'s reported `System.Version` string. PO-specific: warns + asks for
   operator permission before any `unload` (PO has no safe-unload).
-- **Vendored upstream** (git submodules, under `vendor/`):
-  - `vendor/risc-emu/` — Rust port of the RISC5 emulator + host tools
-    (`risc`, `build-po-image`, `build-eo-image`, `extract-source`, `ob2txt`/`txt2ob`).
-    Carries the stock PO disk image at `DiskImage/Oberon-2020-08-18.dsk`.
-  - `vendor/extended-oberon/` — Andreas Pirklbauer's EO distribution;
-    `Documentation/S3RISCinstall.tar.gz` is the stock EO disk image we extract from.
+- **Upstream pieces:**
+  - `vendor/oberon-risc-emu-rs/` (git submodule) — Rust port of the RISC5 emulator +
+    host tools (`risc`, `build-po-image`, `build-eo-image`, `extract-source`,
+    `ob2txt`/`txt2ob`). Carries the stock PO disk image at
+    `DiskImage/Oberon-2020-08-18.dsk`.
+  - **EO stock image** — downloaded by `make` to `build/S3RISCinstall.tar.gz` from
+    upstream (`andreaspirklbauer/Oberon-extended`), not vendored. The full EO repo
+    is ~12 MB and we only consume this single file.
 - **Build outputs** (gitignored): `build/` (extracted source per variant + assembled
   trees), `DiskImage/` (`ProjectOberon.dsk`, `ExtendedOberon.dsk`), `oat/target/`.
 - **Session logs** (gitignored): `log/`.
@@ -50,12 +52,12 @@ Top-level `Makefile` drives everything; from a fresh `git clone --recurse-submod
 - `make eo-image` → `DiskImage/ExtendedOberon.dsk`. Chain: `tools` → `eo-source` →
   apply patches + drop in `AgentTool.Mod` → `build-eo-image`.
 - `make po-image` → `DiskImage/ProjectOberon.dsk`. Same shape, source from
-  `vendor/risc-emu/DiskImage/Oberon-2020-08-18.dsk`, uses `build-po-image`.
+  `vendor/oberon-risc-emu-rs/DiskImage/Oberon-2020-08-18.dsk`, uses `build-po-image`.
 - `make image` → both.
 - `make oberon` → boot the emulator on `/tmp/p.in`+`/tmp/p.out` (override with
   `FIFO_IN=` / `FIFO_OUT=`). Default `VARIANT=eo`; override `VARIANT=po`. Tees a
   timestamped log into `log/`.
-- `make tools` → `cargo build --release --workspace --bins` inside `vendor/risc-emu/`.
+- `make tools` → `cargo build --release --workspace --bins` inside `vendor/oberon-risc-emu-rs/`.
 - `make clean` → `rm -rf build DiskImage`. `make distclean` → also wipes the cargo
   target dir.
 
