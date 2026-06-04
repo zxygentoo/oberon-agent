@@ -139,15 +139,12 @@ DiskImage:
 # `make oberon` boots the default variant ($(VARIANT)). Override with
 #   make oberon VARIANT=po
 oberon:
-	@mkdir -p log
 	@case "$(VARIANT)" in \
 	  po) IMG=$(PO_IMAGE) ;; \
 	  eo) IMG=$(EO_IMAGE) ;; \
 	  *)  echo "VARIANT must be 'po' or 'eo'" >&2; exit 1 ;; \
 	esac; \
-	TS=$$(date +%Y%m%d-%H%M%S); LOG=log/oberon-$(VARIANT)-$$TS.log; \
-	echo "logging to $$LOG"; \
-	$(RISC) --serial-in $(FIFO_IN) --serial-out $(FIFO_OUT) $$IMG 2>&1 | tee "$$LOG"
+	$(RISC) --serial-in $(FIFO_IN) --serial-out $(FIFO_OUT) $$IMG
 
 # --- cleanup -----------------------------------------------------------------
 

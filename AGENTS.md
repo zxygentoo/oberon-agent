@@ -43,7 +43,6 @@ working rules.
     is ~12 MB and we only consume this single file.
 - **Build outputs** (gitignored): `build/` (extracted source per variant + assembled
   trees), `DiskImage/` (`ProjectOberon.dsk`, `ExtendedOberon.dsk`), `oat/target/`.
-- **Session logs** (gitignored): `log/`.
 
 ## Build
 
@@ -55,8 +54,7 @@ Top-level `Makefile` drives everything; from a fresh `git clone --recurse-submod
   `vendor/oberon-risc-emu-rs/DiskImage/Oberon-2020-08-18.dsk`, uses `build-po-image`.
 - `make image` → both.
 - `make oberon` → boot the emulator on `/tmp/p.in`+`/tmp/p.out` (override with
-  `FIFO_IN=` / `FIFO_OUT=`). Default `VARIANT=eo`; override `VARIANT=po`. Tees a
-  timestamped log into `log/`.
+  `FIFO_IN=` / `FIFO_OUT=`). Default `VARIANT=eo`; override `VARIANT=po`.
 - `make tools` → `cargo build --release --workspace --bins` inside `vendor/oberon-risc-emu-rs/`.
 - `make clean` → `rm -rf build DiskImage`. `make distclean` → also wipes the cargo
   target dir.

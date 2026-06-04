@@ -1,8 +1,5 @@
 # build outputs: extracted source, assembled tree, disk images
 build/
 DiskImage/
-# session logs (emulator)
-log/
-# cargo target dirs (risc-emu submodule, oat)
+# risc-emu submodule cargo target dir
 vendor/oberon-risc-emu-rs/target/
-oat/target/
