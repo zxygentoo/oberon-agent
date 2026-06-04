@@ -156,7 +156,7 @@ fn parse_res(log: &str) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{Response, ST_NOT_FOUND, ST_OK, ST_TRAPPED};
+    use crate::protocol::{Response, ST_ERROR, ST_NOT_FOUND, ST_OK, ST_TRAPPED};
     use std::cell::RefCell;
     use std::collections::{HashMap, HashSet};
 
@@ -481,5 +481,30 @@ mod tests {
         let r = run_command(&w, "Bad.Cmd", "").unwrap();
         assert!(matches!(r.outcome(), Err(Error::Trapped)));
         assert_eq!(r.log, "trap log\n");
+    }
+
+    #[test]
+    fn run_command_ok_status_maps_to_ok() {
+        let r = run_command(&FakeDevice::new(), "Any.Cmd", "").unwrap();
+        assert!(r.outcome().is_ok());
+    }
+
+    #[test]
+    fn compile_non_ok_status_is_bad_status() {
+        let w = FakeDevice::new()
+            .with_call(|cmd, _| (cmd == "ORP.Compile").then(|| (ST_ERROR, Vec::new())));
+        assert!(matches!(
+            compile_module(&w, "M.Mod", false),
+            Err(Error::BadStatus { status: ST_ERROR })
+        ));
+    }
+
+    // Guards the full-phrase match in delete_file: a file *named* "failed"
+    // must not be misread as a deletion failure.
+    #[test]
+    fn delete_filename_containing_failed_is_not_misread() {
+        let w = FakeDevice::new().with_file("failed.Mod", b"x");
+        delete_file(&w, "failed.Mod").unwrap();
+        assert!(!w.files.borrow().contains_key("failed.Mod"));
     }
 }

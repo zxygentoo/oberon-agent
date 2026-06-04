@@ -148,3 +148,78 @@ fn poll_readable(fd: RawFd, timeout: Duration) -> Result<bool> {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{Request, ST_OK, SYNC_RESP};
+    use std::os::unix::io::FromRawFd;
+
+    fn pipe() -> (File, File) {
+        let mut fds = [0; 2];
+        // SAFETY: `fds` is the 2-slot buffer `pipe` requires; on success both
+        // fds are fresh, and each is owned by exactly one of the Files below.
+        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe failed");
+        // SAFETY: valid fds we just created, not owned elsewhere.
+        unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) }
+    }
+
+    /// Transport wired to two in-memory pipes. Returns `(transport, feed,
+    /// sent)`: write the device's response bytes into `feed`; read what the
+    /// transport sent out of `sent`.
+    fn harness(timeout: Duration) -> (Transport, File, File) {
+        let (resp_read, resp_write) = pipe();
+        let (sent_read, sent_write) = pipe();
+        let t = Transport {
+            reader: resp_read,
+            writer: Some(sent_write),
+            timeout,
+        };
+        (t, resp_write, sent_read)
+    }
+
+    #[test]
+    fn send_writes_frame_and_decodes_response() {
+        let (t, mut feed, mut sent) = harness(Duration::from_secs(1));
+        feed.write_all(&[SYNC_RESP, ST_OK, 2, 0, 0, 0, b'h', b'i'])
+            .unwrap();
+        let r = t.send(b"frame").unwrap();
+        assert_eq!(r.status, ST_OK);
+        assert_eq!(r.payload, b"hi");
+        // The request frame went out verbatim — transport doesn't inspect it.
+        let mut buf = [0u8; 5];
+        sent.read_exact(&mut buf).unwrap();
+        assert_eq!(&buf, b"frame");
+    }
+
+    #[test]
+    fn silent_line_times_out_with_progress_count() {
+        // `_feed` stays open so the read end blocks instead of seeing EOF.
+        let (t, _feed, _sent) = harness(Duration::from_millis(30));
+        match t.send(b"x") {
+            Err(Error::Timeout { got: 0, want: 1, .. }) => {}
+            other => panic!("expected timeout, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn closed_line_is_eof() {
+        let (t, feed, _sent) = harness(Duration::from_secs(1));
+        drop(feed);
+        assert!(matches!(t.send(b"x"), Err(Error::Eof)));
+    }
+
+    #[test]
+    fn response_split_across_writes_is_reassembled() {
+        let (t, mut feed, _sent) = harness(Duration::from_secs(1));
+        // Split mid-length-field so recv_exact has to loop within one buffer.
+        let writer = std::thread::spawn(move || {
+            feed.write_all(&[SYNC_RESP, ST_OK, 3, 0]).unwrap();
+            std::thread::sleep(Duration::from_millis(20));
+            feed.write_all(&[0, 0, b'a', b'b', b'c']).unwrap();
+        });
+        let r = t.send(b"x").unwrap();
+        assert_eq!(r.payload, b"abc");
+        writer.join().unwrap();
+    }
+}

@@ -301,3 +301,27 @@ fn print_log(log: &str) {
         println!();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use clap::CommandFactory;
+
+    #[test]
+    fn cli_definition_is_consistent() {
+        Cli::command().debug_assert();
+    }
+
+    /// `open_transport`'s `unreachable!` relies on clap rejecting every mixed
+    /// or half-paired serial form — pin that here.
+    #[test]
+    fn serial_forms_are_exclusive_and_paired() {
+        let parse = |args: &[&str]| Cli::try_parse_from(args);
+        assert!(parse(&["oat", "--serial", "p", "check"]).is_ok());
+        assert!(parse(&["oat", "--serial-in", "a", "--serial-out", "b", "check"]).is_ok());
+        assert!(parse(&["oat", "check"]).is_ok()); // NoSerial is reported later, with context
+        assert!(parse(&["oat", "--serial", "p", "--serial-in", "a", "--serial-out", "b", "check"]).is_err());
+        assert!(parse(&["oat", "--serial-in", "a", "check"]).is_err());
+        assert!(parse(&["oat", "--serial-out", "b", "check"]).is_err());
+    }
+}

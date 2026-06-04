@@ -101,4 +101,14 @@ mod tests {
         let data = [0xF1, 0x2A, 0x00, 0x00, 0x00, b'x'];
         assert!(from_oberon(&data).contains('x'));
     }
+
+    #[test]
+    fn from_oberon_truncated_header_falls_back() {
+        // Tag byte present but fewer than 4 offset bytes follow — the whole
+        // buffer is treated as text rather than panicking or truncating.
+        // (Count chars, not bytes: high bytes map Latin-1-style to one char
+        // each, which is more than one UTF-8 byte.)
+        assert_eq!(from_oberon(&[TEXT_TAG, 0x05]).chars().count(), 2);
+        assert_eq!(from_oberon(&[TEXT_TAG]).chars().count(), 1);
+    }
 }

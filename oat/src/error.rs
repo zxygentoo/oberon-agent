@@ -155,3 +155,39 @@ impl From<io::Error> for Error {
 }
 
 pub type Result<T> = std::result::Result<T, Error>;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn exit_codes_partition_tool_vs_transport() {
+        // Tool-level errors -> 1 (the contract in --help and SKILL.md).
+        assert_eq!(Error::CompileFailed.exit_code(), 1);
+        assert_eq!(Error::NotFound { path: "X".into() }.exit_code(), 1);
+        assert_eq!(Error::Trapped.exit_code(), 1);
+        // Transport / protocol / argument errors -> 2.
+        assert_eq!(Error::NoSerial.exit_code(), 2);
+        assert_eq!(Error::Eof.exit_code(), 2);
+        assert_eq!(
+            Error::BadName {
+                name: String::new(),
+                len: 0
+            }
+            .exit_code(),
+            2
+        );
+    }
+
+    #[test]
+    fn load_failed_message_carries_res_hint_and_indented_log() {
+        let e = Error::LoadFailed {
+            res: Some(2),
+            log: "AgentTool.Load\nres=2\n".into(),
+        };
+        let msg = e.to_string();
+        assert!(msg.contains("res=2"));
+        assert!(msg.contains("hint: bad symbol-file key"));
+        assert!(msg.contains("\n  AgentTool.Load"));
+    }
+}
