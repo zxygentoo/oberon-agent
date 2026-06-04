@@ -39,6 +39,9 @@ references to your viewers/tasks in module-level vars so FINAL can reach them. E
 run an already-compiled module just run_command it — no load_module first, and don't compile \
 unless you changed the source. Note: Mod.Open-style commands open a NEW viewer on every call, so \
 invoke them once.
+- For modules that present output to the human operator, open a Viewer with a system menu \
+(e.g. `MenuViewers.New(menuF, mainF, …)`) rather than writing to `Oberon.Log`. Reserve the log \
+for non-interactive helpers (introspection you'll read back via run_command, automation).
 - Do NOT run_command System.Close to close a viewer headlessly — it tests Oberon.Par.vwr.dsc = \
 Par.frame, which the dummy frame in headless CALLs doesn't satisfy, so it no-ops. Implement your \
 module's own Close* command that holds a saved viewer reference and calls Viewers.Close directly.

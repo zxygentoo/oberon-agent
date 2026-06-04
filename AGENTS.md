@@ -68,6 +68,7 @@ roundtrips through `ob2txt`/`txt2ob` so the on-disk module stays in EO's CR form
 
 ## Style preferences
 
+- **Oberon UI commands open a Viewer with a system menu** (e.g. via `MenuViewers.New(menuF, mainF, …)`), not a headless command that writes to `Oberon.Log`. Reserve plain `Oberon.Log` writers for non-interactive use — automation, protocol handlers (e.g. `Puck.Task`), headless introspection.
 - Prefer short, focused functions. If a block of logic has a clear purpose, extract it — even if it's only called once. Give it a good name and place it right below the caller. Single-use helpers are fine.
 - Strongly prefer functional style. Use classes only when they genuinely manage state at the outer boundary of the system. Dataclasses for structured data are fine, custom Exceptions are fine. Default to plain functions + modules.
 - Python 3.12: native `X | None`, `list[X]`, `collections.abc.Iterator`. No `from __future__ import annotations`.
