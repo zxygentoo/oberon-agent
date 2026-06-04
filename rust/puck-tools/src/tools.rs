@@ -1,0 +1,455 @@
+//! High-level operations on the Oberon device.
+//!
+//! Port of `python/src/puck/tools.py`. Each function turns one wire round-trip
+//! (or two for edit) into a typed `Result`. Generic over `Wire` so tests can
+//! plug in an in-memory fake.
+
+use crate::error::{Error, Result};
+use crate::protocol;
+use crate::text::{from_oberon, to_oberon};
+use crate::transport::Wire;
+
+/// Output of `compile_module`. The compiler log is always returned; `failed`
+/// tells main.rs to exit 1 after printing.
+pub struct CompileResult {
+    pub output: String,
+    pub failed: bool,
+}
+
+/// Output of `run_command`. The Log delta is always returned; `status` lets
+/// main.rs map non-OK to the right exit.
+pub struct CallResult {
+    pub log: String,
+    pub status: u8,
+}
+
+pub fn read_file<W: Wire>(w: &W, path: &str) -> Result<String> {
+    let r = w.request(&protocol::build_get(path)?)?;
+    match r.status {
+        protocol::ST_OK => Ok(from_oberon(&r.payload)),
+        protocol::ST_NOT_FOUND => Err(Error::NotFound {
+            path: path.to_string(),
+        }),
+        s => Err(Error::BadStatus { status: s }),
+    }
+}
+
+pub fn write_file<W: Wire>(w: &W, path: &str, content: &str) -> Result<()> {
+    let r = w.request(&protocol::build_put(path, &to_oberon(content))?)?;
+    if r.ok() {
+        Ok(())
+    } else {
+        Err(Error::BadStatus { status: r.status })
+    }
+}
+
+pub fn edit_file<W: Wire>(w: &W, path: &str, old: &str, new: &str) -> Result<()> {
+    let content = read_file(w, path)?;
+    let count = content.matches(old).count();
+    if count == 0 {
+        return Err(Error::EditNotFound);
+    }
+    if count > 1 {
+        return Err(Error::EditNotUnique { count });
+    }
+    write_file(w, path, &content.replacen(old, new, 1))
+}
+
+pub fn delete_file<W: Wire>(w: &W, path: &str) -> Result<()> {
+    let log = call_log(w, "System.DeleteFiles", path)?;
+    // System.Mod writes "<name> deleting" on success, "<name> deleting failed"
+    // on res != 0. Match the full phrase so a filename containing "failed"
+    // doesn't trip the check.
+    if log.contains("deleting failed") {
+        return Err(Error::NotFound {
+            path: path.to_string(),
+        });
+    }
+    Ok(())
+}
+
+pub fn list_files<W: Wire>(w: &W, prefix: &str) -> Result<String> {
+    call_log(w, "Puck.ListFiles", prefix)
+}
+
+pub fn list_modules<W: Wire>(w: &W) -> Result<String> {
+    call_log(w, "Puck.ListModules", "")
+}
+
+/// Count non-blank lines in a TSV listing (used by `check`).
+pub fn count_lines(log: &str) -> usize {
+    log.lines().filter(|l| !l.trim().is_empty()).count()
+}
+
+pub fn load_module<W: Wire>(w: &W, name: &str) -> Result<()> {
+    let log = call_log(w, "Puck.Load", name)?;
+    if log.trim_start().starts_with("loaded") {
+        return Ok(());
+    }
+    let res = parse_res(&log);
+    Err(Error::LoadFailed { res, log })
+}
+
+pub fn unload_module<W: Wire>(w: &W, name: &str) -> Result<String> {
+    // EO safe-unload: `/f` hides modules with live refs (renames to *NAME) but
+    // refuses if other modules still import this one. The phrase
+    // "unloading failed" is the importers-still-loaded discriminator (matches
+    // the Python tool; see python/src/puck/tools.py for the rationale).
+    let args = format!("{name} /f");
+    let log = call_log(w, "System.Free", &args)?;
+    if log.contains("unloading failed") {
+        return Err(Error::UnloadInUse { log });
+    }
+    Ok(log)
+}
+
+pub fn compile_module<W: Wire>(w: &W, name: &str, new_symbol: bool) -> Result<CompileResult> {
+    let par = if new_symbol {
+        format!("{name}/s")
+    } else {
+        name.to_string()
+    };
+    let r = w.request(&protocol::build_call("ORP.Compile", &to_oberon(&par))?)?;
+    if !r.ok() {
+        return Err(Error::BadStatus { status: r.status });
+    }
+    let output = from_oberon(&r.payload);
+    let failed = output.contains("compilation FAILED");
+    Ok(CompileResult { output, failed })
+}
+
+pub fn run_command<W: Wire>(w: &W, cmd: &str, args: &str) -> Result<CallResult> {
+    let r = w.request(&protocol::build_call(cmd, &to_oberon(args))?)?;
+    Ok(CallResult {
+        log: from_oberon(&r.payload),
+        status: r.status,
+    })
+}
+
+// --- internals ---
+
+fn call_log<W: Wire>(w: &W, cmd: &str, args: &str) -> Result<String> {
+    let r = w.request(&protocol::build_call(cmd, &to_oberon(args))?)?;
+    if !r.ok() {
+        return Err(Error::BadStatus { status: r.status });
+    }
+    Ok(from_oberon(&r.payload))
+}
+
+fn parse_res(log: &str) -> Option<i32> {
+    log.split_whitespace()
+        .find_map(|tok| tok.strip_prefix("res=").and_then(|s| s.parse().ok()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::protocol::{Response, ST_NOT_FOUND, ST_OK, ST_TRAPPED};
+    use std::cell::RefCell;
+    use std::collections::{HashMap, HashSet};
+
+    /// Closure shape for ad-hoc CALL responses in a test setup: returns
+    /// `Some((status, log))` to override the default dispatch, or `None` to
+    /// fall through to the built-in behavior.
+    type CallHandler = Box<dyn Fn(&str, &[u8]) -> Option<(u8, Vec<u8>)>>;
+
+    /// In-memory fake of the Oberon side. Mirrors `python/tests/fake.py`.
+    struct FakeWire {
+        files: RefCell<HashMap<String, Vec<u8>>>,
+        modules: RefCell<HashSet<String>>,
+        call: Option<CallHandler>,
+    }
+
+    impl FakeWire {
+        fn new() -> Self {
+            Self {
+                files: RefCell::new(HashMap::new()),
+                modules: RefCell::new(
+                    ["System", "Oberon", "Puck"]
+                        .iter()
+                        .map(ToString::to_string)
+                        .collect(),
+                ),
+                call: None,
+            }
+        }
+
+        fn with_file(self, name: &str, body: &[u8]) -> Self {
+            self.files.borrow_mut().insert(name.to_string(), body.to_vec());
+            self
+        }
+
+        fn with_call(mut self, f: impl Fn(&str, &[u8]) -> Option<(u8, Vec<u8>)> + 'static) -> Self {
+            self.call = Some(Box::new(f));
+            self
+        }
+
+        fn dispatch_call(&self, cmd: &str, par: &[u8]) -> (u8, Vec<u8>) {
+            if let Some(f) = &self.call {
+                if let Some(out) = f(cmd, par) {
+                    return out;
+                }
+            }
+            let arg = String::from_utf8_lossy(par).replace('\r', "\n");
+            let arg = arg.trim();
+            match cmd {
+                "System.DeleteFiles" => {
+                    if self.files.borrow_mut().remove(arg).is_some() {
+                        (ST_OK, format!("System.DeleteFiles\n{arg} deleting\n").into_bytes())
+                    } else {
+                        (
+                            ST_OK,
+                            format!("System.DeleteFiles\n{arg} deleting failed\n").into_bytes(),
+                        )
+                    }
+                }
+                "System.Free" => {
+                    // EO syntax: one or more module names then optional /f.
+                    let parts: Vec<&str> = arg.split_whitespace().filter(|p| *p != "/f").collect();
+                    if let Some(first) = parts.first() {
+                        self.modules.borrow_mut().remove(*first);
+                        let action = if arg.contains("/f") {
+                            "removing from module list"
+                        } else {
+                            "unloading"
+                        };
+                        (
+                            ST_OK,
+                            format!("System.Free\n{first} {action}\n").into_bytes(),
+                        )
+                    } else {
+                        (ST_OK, b"System.Free\n".to_vec())
+                    }
+                }
+                "Puck.Load" => {
+                    self.modules.borrow_mut().insert(arg.to_string());
+                    (ST_OK, format!("loaded {arg}\n").into_bytes())
+                }
+                "Puck.ListFiles" => {
+                    let mut lines = Vec::new();
+                    let mut names: Vec<_> =
+                        self.files.borrow().keys().cloned().collect();
+                    names.sort();
+                    for n in names {
+                        let size = self.files.borrow()[&n].len();
+                        lines.push(format!("{n}\t{size}\t01.01.24 00:00:00"));
+                    }
+                    let mut s = lines.join("\n");
+                    s.push('\n');
+                    (ST_OK, s.into_bytes())
+                }
+                "Puck.ListModules" => {
+                    let mut mods: Vec<_> = self.modules.borrow().iter().cloned().collect();
+                    mods.sort();
+                    let mut s = mods
+                        .into_iter()
+                        .map(|m| format!("{m}\t0\t 00001000"))
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    s.push('\n');
+                    (ST_OK, s.into_bytes())
+                }
+                _ => (ST_OK, Vec::new()),
+            }
+        }
+    }
+
+    impl Wire for FakeWire {
+        fn request(&self, frame: &[u8]) -> Result<Response> {
+            assert_eq!(frame[0], protocol::SYNC_REQ, "bad request sync");
+            let op = frame[1];
+            let nlen = frame[2] as usize;
+            let name = std::str::from_utf8(&frame[3..3 + nlen]).unwrap().to_string();
+            let mut i = 3 + nlen;
+            match op {
+                protocol::OP_GET => match self.files.borrow().get(&name) {
+                    Some(data) => Ok(Response {
+                        status: ST_OK,
+                        payload: data.clone(),
+                    }),
+                    None => Ok(Response {
+                        status: ST_NOT_FOUND,
+                        payload: Vec::new(),
+                    }),
+                },
+                protocol::OP_PUT => {
+                    let dlen = u32::from_le_bytes([
+                        frame[i],
+                        frame[i + 1],
+                        frame[i + 2],
+                        frame[i + 3],
+                    ]) as usize;
+                    i += 4;
+                    self.files
+                        .borrow_mut()
+                        .insert(name, frame[i..i + dlen].to_vec());
+                    Ok(Response {
+                        status: ST_OK,
+                        payload: Vec::new(),
+                    })
+                }
+                protocol::OP_CALL => {
+                    let plen = u32::from_le_bytes([
+                        frame[i],
+                        frame[i + 1],
+                        frame[i + 2],
+                        frame[i + 3],
+                    ]) as usize;
+                    i += 4;
+                    let (status, payload) = self.dispatch_call(&name, &frame[i..i + plen]);
+                    Ok(Response { status, payload })
+                }
+                _ => panic!("bad op {op}"),
+            }
+        }
+    }
+
+    #[test]
+    fn write_then_read_roundtrip() {
+        let w = FakeWire::new();
+        write_file(&w, "M.Mod", "MODULE M;\nEND M.\n").unwrap();
+        // Stored on the device with CR line separators.
+        assert_eq!(w.files.borrow()["M.Mod"], b"MODULE M;\rEND M.\r");
+        assert_eq!(read_file(&w, "M.Mod").unwrap(), "MODULE M;\nEND M.\n");
+    }
+
+    #[test]
+    fn read_missing_file_is_not_found() {
+        let err = read_file(&FakeWire::new(), "X.Mod").unwrap_err();
+        assert!(matches!(err, Error::NotFound { .. }));
+    }
+
+    #[test]
+    fn edit_unique_match_replaces_once() {
+        let w = FakeWire::new().with_file("M.Mod", b"a := 1;\r");
+        edit_file(&w, "M.Mod", "a := 1", "a := 2").unwrap();
+        assert_eq!(w.files.borrow()["M.Mod"], b"a := 2;\r");
+    }
+
+    #[test]
+    fn edit_old_not_found() {
+        let w = FakeWire::new().with_file("M.Mod", b"x\r");
+        assert!(matches!(
+            edit_file(&w, "M.Mod", "zzz", "q"),
+            Err(Error::EditNotFound)
+        ));
+    }
+
+    #[test]
+    fn edit_old_not_unique() {
+        let w = FakeWire::new().with_file("M.Mod", b"a a\r");
+        assert!(matches!(
+            edit_file(&w, "M.Mod", "a", "b"),
+            Err(Error::EditNotUnique { count: 2 })
+        ));
+    }
+
+    #[test]
+    fn delete_present_and_absent() {
+        let w = FakeWire::new().with_file("M.Mod", b"x\r");
+        delete_file(&w, "M.Mod").unwrap();
+        assert!(!w.files.borrow().contains_key("M.Mod"));
+        assert!(matches!(
+            delete_file(&w, "Gone.Mod"),
+            Err(Error::NotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn list_files_returns_tsv() {
+        let w = FakeWire::new()
+            .with_file("A.Mod", b"xx")
+            .with_file("B.Mod", b"yyy");
+        let out = list_files(&w, "").unwrap();
+        assert!(out.contains("A.Mod\t2"));
+        assert!(out.contains("B.Mod\t3"));
+    }
+
+    #[test]
+    fn list_modules_contains_seeded_modules() {
+        let out = list_modules(&FakeWire::new()).unwrap();
+        assert!(out.contains("Puck\t"));
+        assert!(count_lines(&out) >= 3);
+    }
+
+    #[test]
+    fn load_module_marks_success() {
+        load_module(&FakeWire::new(), "Foo").unwrap();
+    }
+
+    #[test]
+    fn load_module_failure_parses_res() {
+        let w = FakeWire::new().with_call(|cmd, _| {
+            if cmd == "Puck.Load" {
+                Some((ST_OK, b"Puck.Load\n  res=2\n".to_vec()))
+            } else {
+                None
+            }
+        });
+        match load_module(&w, "Bad") {
+            Err(Error::LoadFailed { res: Some(2), .. }) => {}
+            other => panic!("unexpected: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn unload_in_use_is_detected() {
+        let w = FakeWire::new().with_call(|cmd, _| {
+            if cmd == "System.Free" {
+                Some((
+                    ST_OK,
+                    b"System.Free\n  X unloading failed, try /f option\n".to_vec(),
+                ))
+            } else {
+                None
+            }
+        });
+        assert!(matches!(
+            unload_module(&w, "X"),
+            Err(Error::UnloadInUse { .. })
+        ));
+    }
+
+    #[test]
+    fn compile_returns_raw_log_and_failed_flag() {
+        let w = FakeWire::new().with_call(|cmd, _| {
+            if cmd == "ORP.Compile" {
+                Some((
+                    ST_OK,
+                    b"  compiling M\n  pos 5 undef\ncompilation FAILED\n".to_vec(),
+                ))
+            } else {
+                None
+            }
+        });
+        let r = compile_module(&w, "M.Mod", false).unwrap();
+        assert!(r.failed);
+        assert!(r.output.contains("undef"));
+    }
+
+    #[test]
+    fn compile_new_symbol_passes_slash_s() {
+        use std::rc::Rc;
+        let saw_slash_s = Rc::new(std::cell::Cell::new(false));
+        let saw = saw_slash_s.clone();
+        let w = FakeWire::new().with_call(move |cmd, par| {
+            if cmd == "ORP.Compile" {
+                saw.set(String::from_utf8_lossy(par).contains("M.Mod/s"));
+                Some((ST_OK, b"  compiling M new symbol file  10 4 ABCD\n".to_vec()))
+            } else {
+                None
+            }
+        });
+        let r = compile_module(&w, "M.Mod", true).unwrap();
+        assert!(!r.failed);
+        assert!(saw_slash_s.get());
+    }
+
+    #[test]
+    fn run_command_reports_trapped_status() {
+        let w = FakeWire::new().with_call(|_, _| Some((ST_TRAPPED, b"trap log\n".to_vec())));
+        let r = run_command(&w, "Bad.Cmd", "").unwrap();
+        assert_eq!(r.status, ST_TRAPPED);
+        assert_eq!(r.log, "trap log\n");
+    }
+}

@@ -2,5 +2,6 @@
 build/
 # session logs (emulator + pucxy)
 log/
-# cargo target dir inside the risc-emu submodule
+# cargo target dirs (risc-emu submodule, puck-tools)
 vendor/*/target/
+rust/*/target/

@@ -1,0 +1,14 @@
+[package]
+name = "puck-tools"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Stateless CLI for driving Puck.Mod on a live Extended Oberon emulator."
+
+[[bin]]
+name = "puck-tools"
+path = "src/main.rs"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+libc = "0.2"
