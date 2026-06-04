@@ -27,7 +27,7 @@ LLM <-> agent (e.g. Claude Code) <--> oat <--> RS232 wire protocol <--> AgentToo
 ### 1. Dependencies
 
 - Rust toolchain: `cargo`
-- Unix tools: `make`, `tar`, `patch`, `curl`
+- Unix tools: `make`, `tar`, `patch`, `curl` (or `wget`)
 
 ### 2. Clone repo with submodules
 

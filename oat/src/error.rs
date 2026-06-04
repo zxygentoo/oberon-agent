@@ -2,8 +2,9 @@
 //!
 //! Each variant carries enough context for a useful one-line message with a
 //! hint where appropriate. `Display` writes that body; `main.rs` adds the
-//! `puck-tools: error: ` prefix. `exit_code()` follows the help-manual spec:
-//! tool-level errors -> 1, transport / protocol / argument errors -> 2.
+//! `oat: error: ` prefix. `exit_code()` follows the contract documented in
+//! `--help` and SKILL.md: tool-level errors -> 1, transport / protocol /
+//! argument errors -> 2.
 
 use std::fmt;
 use std::io;
@@ -65,7 +66,7 @@ impl fmt::Display for Error {
             Self::Timeout { secs, got, want } => write!(
                 f,
                 "no response from emulator after {secs}s ({got}/{want} bytes received)\n  \
-                 hint: is `risc --serial-in <p.in> --serial-out <p.out> puck.dsk` running?"
+                 hint: is `risc --serial-in <p.in> --serial-out <p.out> <image>.dsk` running?"
             ),
             Self::Eof => f.write_str(
                 "serial line closed (EOF) — the emulator dropped the connection",

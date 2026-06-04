@@ -55,11 +55,12 @@ Top-level `Makefile` drives everything; from a fresh `git clone --recurse-submod
 - `make image` → both.
 - `make eo-emu` / `make po-emu` → boot the corresponding emulator image on
   `/tmp/p.in`+`/tmp/p.out` (override with `FIFO_IN=` / `FIFO_OUT=`).
-- `make tools` → `cargo build --release --workspace --bins` inside `vendor/oberon-risc-emu-rs/`.
-- `make clean` → `rm -rf build DiskImage`. `make distclean` → also wipes the cargo
-  target dir.
+- `make tools` → the vendored emulator + host tools (`cargo build --release
+  --workspace --bins` inside `vendor/oberon-risc-emu-rs/`) and the `oat` binary.
+- `make clean` → `rm -rf build DiskImage`. `make distclean` → also wipes both cargo
+  target dirs.
 
-The CLI is a normal Cargo crate — `cargo build --release` inside `oat/`, or
+The CLI is also a normal Cargo crate — `cargo build --release` inside `oat/`, or
 `cargo install --path oat` to put `oat` on PATH.
 
 ### Editing an upstream module

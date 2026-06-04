@@ -2,7 +2,7 @@
 # AgentTool.Mod compiled in and our patches applied.
 #
 # Pipeline per variant V (po | eo):
-#   1. tools         -> cargo build the rust emulator + host-tools
+#   1. tools         -> cargo build the rust emulator + host-tools, and oat
 #   2. <v>-source    -> extract source from a stock disk image
 #                       (PO: vendor/oberon-risc-emu-rs/DiskImage/Oberon-2020-08-18.dsk
 #                        EO: downloaded S3RISCinstall.tar.gz from upstream)
