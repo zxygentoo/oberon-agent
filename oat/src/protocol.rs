@@ -3,8 +3,19 @@
 //!
 //! Host is master: build a REQUEST, send it, then read one RESPONSE. All
 //! multi-byte integers are unsigned little-endian.
+//!
+//! This module is the shared vocabulary of the crate's layering:
+//! `tools` (semantics) and `transport` (I/O) both depend on it and on
+//! nothing else of each other — `Request` is the seam between them.
 
 use crate::error::{Error, Result};
+
+/// The seam between the typed world and the fd world: send one encoded
+/// REQUEST frame, get back the decoded RESPONSE. `transport::Transport` is
+/// the real implementation; tools.rs tests plug in an in-memory fake.
+pub trait Request {
+    fn send(&self, frame: &[u8]) -> Result<Response>;
+}
 
 pub const SYNC_REQ: u8 = 0xA5;
 pub const SYNC_RESP: u8 = 0x5A;

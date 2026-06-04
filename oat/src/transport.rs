@@ -3,8 +3,8 @@
 //! Uses `std::io::{Read, Write}` via the stable `&File` impls for the bulk
 //! transfer. Raw `libc` only for the two operations std doesn't cover:
 //! `poll` (timed read availability) and `tcsetattr` (raw-mode the PTY).
-//! `Wire` is the seam tools.rs codes against — tests plug in an in-memory
-//! fake without touching real fds.
+//! `Transport` is the real `protocol::Request`: it moves the bytes; the
+//! frame grammar itself lives in protocol.rs.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
@@ -15,12 +15,7 @@ use std::ptr::{addr_of, addr_of_mut};
 use std::time::Duration;
 
 use crate::error::{Error, Result};
-use crate::protocol::{read_response, Response};
-
-/// The single seam tools.rs codes against: send a request frame, get a response.
-pub trait Wire {
-    fn request(&self, frame: &[u8]) -> Result<Response>;
-}
+use crate::protocol::{read_response, Request, Response};
 
 pub struct Transport {
     reader: File,
@@ -75,8 +70,8 @@ fn open_fifo(path: &Path) -> Result<File> {
         })
 }
 
-impl Wire for Transport {
-    fn request(&self, frame: &[u8]) -> Result<Response> {
+impl Request for Transport {
+    fn send(&self, frame: &[u8]) -> Result<Response> {
         // Send. FIFO/PTY write buffers (tens of KB) absorb any module-sized
         // payload, so a plain blocking write is safe — no flow control needed.
         // `&File: Write` is the stable std impl that lets us write without &mut.

@@ -1,12 +1,11 @@
 //! High-level operations on the Oberon device.
 //!
 //! Each function turns one wire round-trip (or two for edit) into a typed
-//! `Result`. Generic over `Wire` so tests can plug in an in-memory fake.
+//! `Result`. Generic over `Request` so tests can plug in an in-memory fake.
 
 use crate::error::{Error, Result};
-use crate::protocol;
+use crate::protocol::{self, Request};
 use crate::text::{from_oberon, to_oberon};
-use crate::transport::Wire;
 
 /// Output of `compile_module`. The compiler log is always returned; `failed`
 /// tells main.rs to exit 1 after printing.
@@ -15,15 +14,25 @@ pub struct CompileResult {
     pub failed: bool,
 }
 
-/// Output of `run_command`. The Log delta is always returned; `status` lets
-/// main.rs map non-OK to the right exit.
+/// Output of `run_command`. The Log delta is always returned; `outcome()`
+/// maps the device status to the command result once the log is printed.
 pub struct CallResult {
     pub log: String,
-    pub status: u8,
+    status: u8,
 }
 
-pub fn read_file<W: Wire>(w: &W, path: &str) -> Result<String> {
-    let r = w.request(&protocol::build_get(path)?)?;
+impl CallResult {
+    pub fn outcome(&self) -> Result<()> {
+        match self.status {
+            protocol::ST_OK => Ok(()),
+            protocol::ST_TRAPPED => Err(Error::Trapped),
+            s => Err(Error::BadStatus { status: s }),
+        }
+    }
+}
+
+pub fn read_file<R: Request>(req: &R, path: &str) -> Result<String> {
+    let r = req.send(&protocol::build_get(path)?)?;
     match r.status {
         protocol::ST_OK => Ok(from_oberon(&r.payload)),
         protocol::ST_NOT_FOUND => Err(Error::NotFound {
@@ -33,8 +42,8 @@ pub fn read_file<W: Wire>(w: &W, path: &str) -> Result<String> {
     }
 }
 
-pub fn write_file<W: Wire>(w: &W, path: &str, content: &str) -> Result<()> {
-    let r = w.request(&protocol::build_put(path, &to_oberon(content))?)?;
+pub fn write_file<R: Request>(req: &R, path: &str, content: &str) -> Result<()> {
+    let r = req.send(&protocol::build_put(path, &to_oberon(content))?)?;
     if r.ok() {
         Ok(())
     } else {
@@ -42,8 +51,8 @@ pub fn write_file<W: Wire>(w: &W, path: &str, content: &str) -> Result<()> {
     }
 }
 
-pub fn edit_file<W: Wire>(w: &W, path: &str, old: &str, new: &str) -> Result<()> {
-    let content = read_file(w, path)?;
+pub fn edit_file<R: Request>(req: &R, path: &str, old: &str, new: &str) -> Result<()> {
+    let content = read_file(req, path)?;
     let count = content.matches(old).count();
     if count == 0 {
         return Err(Error::EditNotFound);
@@ -51,11 +60,11 @@ pub fn edit_file<W: Wire>(w: &W, path: &str, old: &str, new: &str) -> Result<()>
     if count > 1 {
         return Err(Error::EditNotUnique { count });
     }
-    write_file(w, path, &content.replacen(old, new, 1))
+    write_file(req, path, &content.replacen(old, new, 1))
 }
 
-pub fn delete_file<W: Wire>(w: &W, path: &str) -> Result<()> {
-    let log = call_log(w, "System.DeleteFiles", path)?;
+pub fn delete_file<R: Request>(req: &R, path: &str) -> Result<()> {
+    let log = call_log(req, "System.DeleteFiles", path)?;
     // System.Mod writes "<name> deleting" on success, "<name> deleting failed"
     // on res != 0. Match the full phrase so a filename containing "failed"
     // doesn't trip the check.
@@ -67,22 +76,22 @@ pub fn delete_file<W: Wire>(w: &W, path: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn list_files<W: Wire>(w: &W, prefix: &str) -> Result<String> {
-    call_log(w, "AgentTool.ListFiles", prefix)
+pub fn list_files<R: Request>(req: &R, prefix: &str) -> Result<String> {
+    call_log(req, "AgentTool.ListFiles", prefix)
 }
 
-pub fn list_modules<W: Wire>(w: &W) -> Result<String> {
-    call_log(w, "AgentTool.ListModules", "")
+pub fn list_modules<R: Request>(req: &R) -> Result<String> {
+    call_log(req, "AgentTool.ListModules", "")
 }
 
 /// Read `System.Version` via `AgentTool.Version` (returns the trimmed log line).
 /// Empty when the image lacks the System.Version patch.
-pub fn version<W: Wire>(w: &W) -> Result<String> {
-    Ok(call_log(w, "AgentTool.Version", "")?.trim().to_string())
+pub fn version<R: Request>(req: &R) -> Result<String> {
+    Ok(call_log(req, "AgentTool.Version", "")?.trim().to_string())
 }
 
-pub fn load_module<W: Wire>(w: &W, name: &str) -> Result<()> {
-    let log = call_log(w, "AgentTool.Load", name)?;
+pub fn load_module<R: Request>(req: &R, name: &str) -> Result<()> {
+    let log = call_log(req, "AgentTool.Load", name)?;
     if log.trim_start().starts_with("loaded") {
         return Ok(());
     }
@@ -90,7 +99,7 @@ pub fn load_module<W: Wire>(w: &W, name: &str) -> Result<()> {
     Err(Error::LoadFailed { res, log })
 }
 
-pub fn unload_module<W: Wire>(w: &W, name: &str) -> Result<String> {
+pub fn unload_module<R: Request>(req: &R, name: &str) -> Result<String> {
     // We always pass `/f`. On EO that triggers safe-unload (hide-and-rename when
     // live refs persist, full removal otherwise). On PO, `/f` tokenizes as junk
     // that the System.Free scanner discards — so the module is unloaded the
@@ -99,20 +108,20 @@ pub fn unload_module<W: Wire>(w: &W, name: &str) -> Result<String> {
     // undetected here, which is why the skill insists on operator permission
     // before any unload on PO.
     let args = format!("{name} /f");
-    let log = call_log(w, "System.Free", &args)?;
+    let log = call_log(req, "System.Free", &args)?;
     if log.contains("unloading failed") {
         return Err(Error::UnloadInUse { log });
     }
     Ok(log)
 }
 
-pub fn compile_module<W: Wire>(w: &W, name: &str, new_symbol: bool) -> Result<CompileResult> {
+pub fn compile_module<R: Request>(req: &R, name: &str, new_symbol: bool) -> Result<CompileResult> {
     let par = if new_symbol {
         format!("{name}/s")
     } else {
         name.to_string()
     };
-    let r = w.request(&protocol::build_call("ORP.Compile", &to_oberon(&par))?)?;
+    let r = req.send(&protocol::build_call("ORP.Compile", &to_oberon(&par))?)?;
     if !r.ok() {
         return Err(Error::BadStatus { status: r.status });
     }
@@ -121,8 +130,8 @@ pub fn compile_module<W: Wire>(w: &W, name: &str, new_symbol: bool) -> Result<Co
     Ok(CompileResult { output, failed })
 }
 
-pub fn run_command<W: Wire>(w: &W, cmd: &str, args: &str) -> Result<CallResult> {
-    let r = w.request(&protocol::build_call(cmd, &to_oberon(args))?)?;
+pub fn run_command<R: Request>(req: &R, cmd: &str, args: &str) -> Result<CallResult> {
+    let r = req.send(&protocol::build_call(cmd, &to_oberon(args))?)?;
     Ok(CallResult {
         log: from_oberon(&r.payload),
         status: r.status,
@@ -131,8 +140,8 @@ pub fn run_command<W: Wire>(w: &W, cmd: &str, args: &str) -> Result<CallResult> 
 
 // --- internals ---
 
-fn call_log<W: Wire>(w: &W, cmd: &str, args: &str) -> Result<String> {
-    let r = w.request(&protocol::build_call(cmd, &to_oberon(args))?)?;
+fn call_log<R: Request>(req: &R, cmd: &str, args: &str) -> Result<String> {
+    let r = req.send(&protocol::build_call(cmd, &to_oberon(args))?)?;
     if !r.ok() {
         return Err(Error::BadStatus { status: r.status });
     }
@@ -157,13 +166,13 @@ mod tests {
     type CallHandler = Box<dyn Fn(&str, &[u8]) -> Option<(u8, Vec<u8>)>>;
 
     /// In-memory fake of the Oberon side.
-    struct FakeWire {
+    struct FakeDevice {
         files: RefCell<HashMap<String, Vec<u8>>>,
         modules: RefCell<HashSet<String>>,
         call: Option<CallHandler>,
     }
 
-    impl FakeWire {
+    impl FakeDevice {
         fn new() -> Self {
             Self {
                 files: RefCell::new(HashMap::new()),
@@ -261,8 +270,8 @@ mod tests {
         }
     }
 
-    impl Wire for FakeWire {
-        fn request(&self, frame: &[u8]) -> Result<Response> {
+    impl Request for FakeDevice {
+        fn send(&self, frame: &[u8]) -> Result<Response> {
             assert_eq!(frame[0], protocol::SYNC_REQ, "bad request sync");
             let op = frame[1];
             let nlen = frame[2] as usize;
@@ -313,7 +322,7 @@ mod tests {
 
     #[test]
     fn write_then_read_roundtrip() {
-        let w = FakeWire::new();
+        let w = FakeDevice::new();
         write_file(&w, "M.Mod", "MODULE M;\nEND M.\n").unwrap();
         // Stored on the device with CR line separators.
         assert_eq!(w.files.borrow()["M.Mod"], b"MODULE M;\rEND M.\r");
@@ -322,20 +331,20 @@ mod tests {
 
     #[test]
     fn read_missing_file_is_not_found() {
-        let err = read_file(&FakeWire::new(), "X.Mod").unwrap_err();
+        let err = read_file(&FakeDevice::new(), "X.Mod").unwrap_err();
         assert!(matches!(err, Error::NotFound { .. }));
     }
 
     #[test]
     fn edit_unique_match_replaces_once() {
-        let w = FakeWire::new().with_file("M.Mod", b"a := 1;\r");
+        let w = FakeDevice::new().with_file("M.Mod", b"a := 1;\r");
         edit_file(&w, "M.Mod", "a := 1", "a := 2").unwrap();
         assert_eq!(w.files.borrow()["M.Mod"], b"a := 2;\r");
     }
 
     #[test]
     fn edit_old_not_found() {
-        let w = FakeWire::new().with_file("M.Mod", b"x\r");
+        let w = FakeDevice::new().with_file("M.Mod", b"x\r");
         assert!(matches!(
             edit_file(&w, "M.Mod", "zzz", "q"),
             Err(Error::EditNotFound)
@@ -344,7 +353,7 @@ mod tests {
 
     #[test]
     fn edit_old_not_unique() {
-        let w = FakeWire::new().with_file("M.Mod", b"a a\r");
+        let w = FakeDevice::new().with_file("M.Mod", b"a a\r");
         assert!(matches!(
             edit_file(&w, "M.Mod", "a", "b"),
             Err(Error::EditNotUnique { count: 2 })
@@ -353,7 +362,7 @@ mod tests {
 
     #[test]
     fn delete_present_and_absent() {
-        let w = FakeWire::new().with_file("M.Mod", b"x\r");
+        let w = FakeDevice::new().with_file("M.Mod", b"x\r");
         delete_file(&w, "M.Mod").unwrap();
         assert!(!w.files.borrow().contains_key("M.Mod"));
         assert!(matches!(
@@ -364,7 +373,7 @@ mod tests {
 
     #[test]
     fn list_files_returns_tsv() {
-        let w = FakeWire::new()
+        let w = FakeDevice::new()
             .with_file("A.Mod", b"xx")
             .with_file("B.Mod", b"yyy");
         let out = list_files(&w, "").unwrap();
@@ -374,20 +383,20 @@ mod tests {
 
     #[test]
     fn list_modules_contains_seeded_modules() {
-        let out = list_modules(&FakeWire::new()).unwrap();
+        let out = list_modules(&FakeDevice::new()).unwrap();
         assert!(out.contains("AgentTool\t"));
         assert!(out.lines().filter(|l| !l.trim().is_empty()).count() >= 3);
     }
 
     #[test]
     fn version_returns_system_version_string() {
-        let v = version(&FakeWire::new()).unwrap();
+        let v = version(&FakeDevice::new()).unwrap();
         assert!(v.contains("Extended Oberon"));
     }
 
     #[test]
     fn version_handles_empty_payload() {
-        let w = FakeWire::new().with_call(|cmd, _| {
+        let w = FakeDevice::new().with_call(|cmd, _| {
             (cmd == "AgentTool.Version").then(|| (ST_OK, Vec::new()))
         });
         assert_eq!(version(&w).unwrap(), "");
@@ -395,12 +404,12 @@ mod tests {
 
     #[test]
     fn load_module_marks_success() {
-        load_module(&FakeWire::new(), "Foo").unwrap();
+        load_module(&FakeDevice::new(), "Foo").unwrap();
     }
 
     #[test]
     fn load_module_failure_parses_res() {
-        let w = FakeWire::new().with_call(|cmd, _| {
+        let w = FakeDevice::new().with_call(|cmd, _| {
             if cmd == "AgentTool.Load" {
                 Some((ST_OK, b"AgentTool.Load\n  res=2\n".to_vec()))
             } else {
@@ -415,7 +424,7 @@ mod tests {
 
     #[test]
     fn unload_in_use_is_detected() {
-        let w = FakeWire::new().with_call(|cmd, _| {
+        let w = FakeDevice::new().with_call(|cmd, _| {
             if cmd == "System.Free" {
                 Some((
                     ST_OK,
@@ -433,7 +442,7 @@ mod tests {
 
     #[test]
     fn compile_returns_raw_log_and_failed_flag() {
-        let w = FakeWire::new().with_call(|cmd, _| {
+        let w = FakeDevice::new().with_call(|cmd, _| {
             if cmd == "ORP.Compile" {
                 Some((
                     ST_OK,
@@ -453,7 +462,7 @@ mod tests {
         use std::rc::Rc;
         let saw_slash_s = Rc::new(std::cell::Cell::new(false));
         let saw = saw_slash_s.clone();
-        let w = FakeWire::new().with_call(move |cmd, par| {
+        let w = FakeDevice::new().with_call(move |cmd, par| {
             if cmd == "ORP.Compile" {
                 saw.set(String::from_utf8_lossy(par).contains("M.Mod/s"));
                 Some((ST_OK, b"  compiling M new symbol file  10 4 ABCD\n".to_vec()))
@@ -468,9 +477,9 @@ mod tests {
 
     #[test]
     fn run_command_reports_trapped_status() {
-        let w = FakeWire::new().with_call(|_, _| Some((ST_TRAPPED, b"trap log\n".to_vec())));
+        let w = FakeDevice::new().with_call(|_, _| Some((ST_TRAPPED, b"trap log\n".to_vec())));
         let r = run_command(&w, "Bad.Cmd", "").unwrap();
-        assert_eq!(r.status, ST_TRAPPED);
+        assert!(matches!(r.outcome(), Err(Error::Trapped)));
         assert_eq!(r.log, "trap log\n");
     }
 }

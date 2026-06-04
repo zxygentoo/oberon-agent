@@ -29,7 +29,14 @@ working rules.
   - `AgentTool.Mod` exports: `ListFiles`, `ListModules`, `Load`, and `Version`
     (echoes `System.Version` to the Log; the `oat check` smoke-test parses it).
 - **Host CLI.** Rust binary `oat` in `oat/` — single Cargo crate (package = `oat`,
-  binary = `oat`). Deps: `clap` (4, derive), `libc` (POSIX I/O).
+  binary = `oat`). Deps: `clap` (4, derive), `libc` (POSIX I/O). Layering:
+  `protocol.rs` is the shared vocabulary (frame codec, `Response`, the
+  `Request` seam); `transport.rs` implements `Request` over a PTY/FIFO pair;
+  `tools.rs` codes against `Request` and turns wire statuses into typed
+  `Error`s; `main.rs` is the
+  composition root (clap → construct `Transport` → call `tools`). `tools` and
+  `transport` depend only on `protocol`, never on each other; `main` never
+  touches `protocol`.
 - **Skill.** `skill/oberon-agent/SKILL.md` — one file, covers both variants. Branches
   on `oat check`'s reported `System.Version` string. PO-specific: warns + asks for
   operator permission before any `unload` (PO has no safe-unload).

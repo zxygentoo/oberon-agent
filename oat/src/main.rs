@@ -287,11 +287,7 @@ fn cmd_unload(t: &Transport, name: &str) -> Result<()> {
 fn cmd_call(t: &Transport, cmd: &str, args: &str) -> Result<()> {
     let r = tools::run_command(t, cmd, args)?;
     print_log(&r.log);
-    match r.status {
-        protocol::ST_OK => Ok(()),
-        protocol::ST_TRAPPED => Err(Error::Trapped),
-        s => Err(Error::BadStatus { status: s }),
-    }
+    r.outcome()
 }
 
 /// Print a tool log to stdout, ensuring a trailing newline when non-empty
