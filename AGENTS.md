@@ -53,8 +53,8 @@ Top-level `Makefile` drives everything; from a fresh `git clone --recurse-submod
 - `make po-image` → `DiskImage/ProjectOberon.dsk`. Same shape, source from
   `vendor/oberon-risc-emu-rs/DiskImage/Oberon-2020-08-18.dsk`, uses `build-po-image`.
 - `make image` → both.
-- `make oberon` → boot the emulator on `/tmp/p.in`+`/tmp/p.out` (override with
-  `FIFO_IN=` / `FIFO_OUT=`). Default `VARIANT=eo`; override `VARIANT=po`.
+- `make eo-emu` / `make po-emu` → boot the corresponding emulator image on
+  `/tmp/p.in`+`/tmp/p.out` (override with `FIFO_IN=` / `FIFO_OUT=`).
 - `make tools` → `cargo build --release --workspace --bins` inside `vendor/oberon-risc-emu-rs/`.
 - `make clean` → `rm -rf build DiskImage`. `make distclean` → also wipes the cargo
   target dir.

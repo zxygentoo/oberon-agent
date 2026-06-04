@@ -57,7 +57,7 @@ Mod/
 skill/oberon-agent/SKILL.md   agent-facing skill (single file; PO and EO covered)
 DiskImage/                    build outputs: ProjectOberon.dsk, ExtendedOberon.dsk (gitignored)
 vendor/                       submodules: risc-emu, extended-oberon
-Makefile                      `make po-image`, `make eo-image`, `make image` (both), `make oberon`
+Makefile                      `make {po,eo}-image` (build), `make {po,eo}-emu` (boot), `make image` (both)
 ```
 
 ## Quick start
@@ -112,7 +112,7 @@ ln -s "$PWD/skill/oberon-agent" ~/.claude/skills/oberon-agent
 
 ```
 mkfifo /tmp/p.in /tmp/p.out          # once
-make oberon                          # default: EO; override with VARIANT=po
+make eo-emu                          # or `make po-emu`
 ```
 
 `AgentTool.Mod` auto-installs at boot (our patched `Oberon.Mod` loads it after

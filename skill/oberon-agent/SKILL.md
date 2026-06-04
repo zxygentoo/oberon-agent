@@ -1,51 +1,61 @@
 ---
 name: oberon-agent
-description: Drive a live Project Oberon 2013 or Extended Oberon system via the `oat` CLI — read/write/edit files, compile, load/unload modules, run commands. Use when the user asks you to act as the Oberon agent, write or modify Oberon code in the live system, or work on the Oberon side of this project. Requires the emulator running with `AgentTool.Mod` and a known serial line (PTY or FIFO pair).
+description: Drive a live Project Oberon 2013 or Extended Oberon system via the `oat` CLI — read/write/edit files, compile, load/unload modules, run commands. Use when the user asks you to act as the Oberon agent, write or modify Oberon code in a live Oberon system, or work on Oberon-side code that's running in an emulator. Needs the `oat` binary and a known serial line (PTY or FIFO pair) to a booted emulator with `AgentTool.Mod` installed.
 ---
 
-# oberon-agent — code-on-a-live-Oberon-system skill
+# oberon-agent
 
 You drive a LIVE Project Oberon 2013 (PO) or Extended Oberon (EO) system through one
 CLI: `oat`. Each invocation opens the serial line, sends one PUT/GET/CALL request to
 `AgentTool.Mod` on the device, prints the result, and exits. The agent loop lives in
 **you**; the device stays stateless across calls.
 
-## Prereqs
+## Startup — once per session
 
-- `oat` on PATH (`cargo install --path oat`, or `cargo build --release` in `oat/` and
-  add `oat/target/release` to PATH).
-- The user has booted the emulator separately (see this repo's `make oberon`) and knows
-  the serial line — either a PTY/serial device or a FIFO pair. Ask if it isn't in the
-  conversation already. No defaults: every invocation spells the flags out.
+Before doing anything else, do these three steps in order. Don't skip ahead.
 
-Two connection forms; pick one:
+### 1. Locate `oat`
 
-- `oat --serial /dev/pts/3 <CMD>`
-- `oat --serial-in /tmp/p.in --serial-out /tmp/p.out <CMD>`
-
-Keep them out of every command by stashing once at the start of the session:
+Try in this order; stop at the first hit:
 
 ```bash
-OAT="oat --serial-in /tmp/p.in --serial-out /tmp/p.out"
+command -v oat              # on PATH
+ls ./oat ./bin/oat ./tools/oat 2>/dev/null
 ```
 
-then prefix calls: `$OAT check`, `$OAT read AgentTool.Mod`, …
+If none of those resolve, ask the user where the `oat` binary is. Don't guess. Once
+found, treat its path as `OAT_BIN` for the rest of the session.
 
-## Step 1: always `check` first
+### 2. Get the serial-line configuration from the user
+
+There are no defaults. Ask the user which form they're using and what paths:
+
+- A single PTY / serial device:  `--serial <PATH>`
+- A FIFO pair:                   `--serial-in <PATH> --serial-out <PATH>`
+
+Stash both pieces together so every later call is short. Example:
+
+```bash
+OAT="$OAT_BIN --serial-in /tmp/p.in --serial-out /tmp/p.out"
+```
+
+(Use whatever paths the user gave you — `/tmp/p.in` / `/tmp/p.out` is a common
+convention but don't assume it.)
+
+### 3. Run `oat check` and read the result
 
 ```
 $ $OAT check
 ok: Extended Oberon System  AP 1.1.26 (round-trip 8ms)
 ```
 
-`check` calls `AgentTool.Version`, which echoes `System.Version` back through the wire.
-Three response shapes you'll see:
+`check` calls `AgentTool.Version`, which echoes `System.Version` back. Four shapes:
 
 | `check` output starts with | meaning | what to do |
 |---|---|---|
-| `ok: Extended Oberon …` | EO image with our patches | safe path: EO has safe-unload via `/f` (see "Working rules") |
-| `ok: Project Oberon 2013…` | PO image with our patches | **WARNING: unload is unsafe on PO**. See "Unload on PO" below |
-| `ok: connected (… no version string …)` | image was not built with our System.Version patch | unknown variant. Tell the user and ask before any `unload`. Assume PO-style risks |
+| `ok: Extended Oberon …` | EO image with the System.Version patch | safe path: EO has safe-unload (see "Unload") |
+| `ok: Project Oberon 2013…` | PO image with the System.Version patch | **unload is unsafe on PO** — see "Unload on PO" |
+| `ok: connected (… no version string …)` | wire is up but the image lacks the patch | unknown variant. Tell the user, assume PO-style risks, ask before any `unload` |
 | any error | wire is broken or emulator isn't running | stop and report; don't try to recover yourself |
 
 ## Tools
@@ -81,8 +91,8 @@ BEGIN Texts.OpenWriter(W);
 END Stars.
 EOF
 $OAT compile Stars.Mod      # see compiler log
-$OAT load Stars              # only if compile succeeded
-$OAT call Stars.Show         # run it
+$OAT load Stars             # only if compile succeeded
+$OAT call Stars.Show        # run it
 ```
 
 **Edit + recompile + reload** (replace a *running* module):
@@ -90,7 +100,7 @@ $OAT call Stars.Show         # run it
 ```bash
 $OAT edit Stars.Mod 'old fragment' 'new fragment'
 $OAT compile Stars.Mod
-$OAT unload Stars            # see "Unload" section — PO needs operator permission first
+$OAT unload Stars           # see "Unload" — PO needs operator permission first
 $OAT load Stars
 ```
 
@@ -142,7 +152,7 @@ scanner; PO calls `Modules.Free(NAME)` which:
 3. Ask explicitly for permission to proceed. Wait for a clear yes.
 4. If they say yes, run `oat unload NAME`.
 5. If they say no, suggest alternatives: keep editing without unload, reboot the
-   emulator + reload from disk, or run with the EO image instead.
+   emulator + reload from disk, or run with an EO image instead.
 
 Also: `oat unload` cannot reliably detect an in-use refusal on PO (the EO-only
 "unloading failed" log phrase doesn't appear). Verify the unload took effect with
@@ -150,9 +160,9 @@ Also: `oat unload` cannot reliably detect an in-use refusal on PO (the EO-only
 
 ### Unknown variant (no version reported)
 
-Treat it as PO — assume unsafe-unload, ask the user before every `unload`. The image
-may not have been built from this repo; tell the user and ask if they want to proceed
-at their own risk.
+Treat it as PO — assume unsafe-unload, ask the user before every `unload`. Tell the
+user the image lacks the version-string patch and ask whether to proceed at their
+own risk.
 
 ## Working rules
 
@@ -210,9 +220,9 @@ at their own risk.
 
 ## When to use this skill
 
-Use when the user asks you to write, modify, or run Oberon code in the live system,
-or asks you to behave as the oberon-agent.
+Use when the user asks you to write, modify, or run Oberon code in a live Oberon
+system, or asks you to behave as the oberon-agent.
 
-Don't invoke for normal work on this repo's *host-side* code — the Rust `oat` CLI
-under `oat/`, the `Makefile`, docs — those are normal source files; edit them with
-the standard Read/Edit/Write tools.
+Don't invoke for host-side code unrelated to the Oberon runtime — normal source
+files (Rust, C, Python, etc.) on the host don't go through `oat`. Use the standard
+Read/Edit/Write tools for those.

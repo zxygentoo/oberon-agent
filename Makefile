@@ -41,18 +41,18 @@ EO_NEW_MODS := $(wildcard $(EO_MOD_DIR)/*.Mod)
 FIFO_IN     ?= /tmp/p.in
 FIFO_OUT    ?= /tmp/p.out
 
-# Default variant for `make oberon` (override on the command line: VARIANT=po).
-VARIANT     ?= eo
+.PHONY: image po-image eo-image tools po-source eo-source po-emu eo-emu check-fifos clean distclean
 
-.PHONY: image po-image eo-image tools po-source eo-source oberon clean distclean
+# Default goal — bare `make` builds both images.
+.DEFAULT_GOAL := image
 
 # --- combined targets --------------------------------------------------------
 
 image: po-image eo-image
 
-po-image: $(PO_IMAGE)
+po-image: tools $(PO_IMAGE)
 
-eo-image: $(EO_IMAGE)
+eo-image: tools $(EO_IMAGE)
 
 # --- PO image ----------------------------------------------------------------
 
@@ -136,15 +136,28 @@ DiskImage:
 
 # --- run ---------------------------------------------------------------------
 
-# `make oberon` boots the default variant ($(VARIANT)). Override with
-#   make oberon VARIANT=po
-oberon:
-	@case "$(VARIANT)" in \
-	  po) IMG=$(PO_IMAGE) ;; \
-	  eo) IMG=$(EO_IMAGE) ;; \
-	  *)  echo "VARIANT must be 'po' or 'eo'" >&2; exit 1 ;; \
-	esac; \
-	$(RISC) --serial-in $(FIFO_IN) --serial-out $(FIFO_OUT) $$IMG
+# `make {eo,po}-emu` builds the image if stale, then boots it on the FIFO pair.
+# Override the FIFOs with `make eo-emu FIFO_IN=... FIFO_OUT=...`.
+eo-emu: eo-image check-fifos
+	$(RISC) --serial-in $(FIFO_IN) --serial-out $(FIFO_OUT) $(EO_IMAGE)
+
+po-emu: po-image check-fifos
+	$(RISC) --serial-in $(FIFO_IN) --serial-out $(FIFO_OUT) $(PO_IMAGE)
+
+# Verify both FIFOs exist and are actually named pipes (vs missing or a
+# regular file someone `touch`ed by accident).
+check-fifos:
+	@for f in $(FIFO_IN) $(FIFO_OUT); do \
+	  if [ ! -e "$$f" ]; then \
+	    echo "missing FIFO: $$f" >&2; \
+	    echo "  create with: mkfifo $(FIFO_IN) $(FIFO_OUT)" >&2; \
+	    exit 1; \
+	  elif [ ! -p "$$f" ]; then \
+	    echo "not a FIFO (regular file?): $$f" >&2; \
+	    echo "  remove it and run: mkfifo $(FIFO_IN) $(FIFO_OUT)" >&2; \
+	    exit 1; \
+	  fi; \
+	done
 
 # --- cleanup -----------------------------------------------------------------
 
