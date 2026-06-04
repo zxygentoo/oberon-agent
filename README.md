@@ -1,124 +1,137 @@
-# puck
+# oberon-agent
 
-A coding agent that runs on — and modifies — a *live* Extended Oberon system.
+Turn any Claude-Code-shaped LLM agent into a coding agent that operates on — and modifies —
+a *live* Project Oberon 2013 or Extended Oberon system.
 
 ## The idea
 
-Extended Oberon (a 2020-era superset of Niklaus Wirth's Oberon-07) is unusual in that
-modules can be compiled, loaded, and *safely unloaded* in the running system. With the
-right tools, an agent can change the live system from the inside — edit a module, recompile,
-unload the old code, load the new code, and keep going without rebooting. As a stretch goal,
-that includes the compiler toolchain itself.
+Oberon is unusual: modules can be compiled, loaded, and (on EO, safely) unloaded *in the
+running system*. With the right tools, an agent can change the live system from the
+inside — edit a module, recompile, swap the old code out, swap the new code in, and keep
+going without rebooting.
 
-puck wires this up:
+Two pieces wire this up:
 
-- An **LLM** drives the agent loop via a named tool API.
-- A **Python host proxy** (`puck`) owns HTTPS/JSON, the tool implementations, and a serial
-  link to the emulated machine.
-- A small **Oberon-side server** (`Puck.Mod`) speaks a three-op wire protocol — `PUT` / `GET`
-  / `CALL` — and lets the proxy read files, write files, and run any `Mod.Proc` command
-  inside the live system.
+- **`oat`** — *oberon-agent-tool* — a stateless Rust CLI. Each invocation opens the
+  emulator's serial line, sends one PUT/GET/CALL request, prints the result, and exits.
+- **`skill/oberon-agent/SKILL.md`** — the agent-facing rules. Drop it into
+  `~/.claude/skills/oberon-agent/SKILL.md` (or symlink) and any Claude-Code session
+  with `oat` on PATH becomes the agent.
 
 ```
-LLM  <-HTTPS/JSON->  host proxy (Python)  <-RS232 wire protocol->  Puck.Mod on Oberon
+LLM agent (Claude Code) -- runs `oat` -- RS232 wire protocol -- AgentTool.Mod on Oberon
 ```
 
-The agent loop runs on the host. The Oberon side stays a small, dumb request/response
-server. The proxy bridges them, exposing the wire ops as explicit, named tools to the LLM:
-read/write/edit/delete files, list files and modules, compile, load and (safely) unload
-modules, plus a `run_command` escape hatch.
+The agent loop lives in the LLM. The Oberon side stays a small, dumb request/response
+server (`Mod/{ProjectOberon,ExtendedOberon}/AgentTool.Mod`). `oat` translates wire ops
+into named subcommands the agent invokes from its prompt.
 
-See [`spec.md`](spec.md) for the design and [`AGENTS.md`](AGENTS.md) for working notes.
+See [`skill/oberon-agent/SKILL.md`](skill/oberon-agent/SKILL.md) for the working rules
+and [`AGENTS.md`](AGENTS.md) for contributor notes.
 
 ## How the vendored pieces are used
 
-Two git submodules under `vendor/` supply everything we don't write ourselves.
+Two git submodules under `vendor/`:
 
-**[`vendor/risc-emu/`](https://github.com/zxygentoo/oberon-risc-emu-rs)** — a Rust port of Wirth's RISC5 emulator and host tools:
+**[`vendor/risc-emu/`](https://github.com/zxygentoo/oberon-risc-emu-rs)** — Rust port of
+Wirth's RISC5 emulator and host tools:
 
-- `risc` — runs the emulator (the GUI window where Oberon boots).
-- `extract-source` — pulls Oberon source out of a stock disk image into a host directory.
-- `build-eo-image` — compiles a source tree (topologically, via a host-side shim) and
-  produces a bootable `.dsk`. Used to bake `Puck.Mod` into the image.
-- `ob2txt` / `txt2ob` — convert between Oberon's CR-terminated module format and plain LF
-  text, so patches stay readable in git.
+- `risc` — runs the emulator (the GUI window).
+- `extract-source` — pulls Oberon source out of a stock disk image.
+- `build-po-image` / `build-eo-image` — compile a source tree and produce a bootable
+  `.dsk`. We use both — one per variant.
+- `ob2txt` / `txt2ob` — convert between Oberon's CR-terminated module format and plain
+  LF text, so patches stay readable in git.
+- `DiskImage/Oberon-2020-08-18.dsk` — the stock PO2013 disk image we extract from.
 
-**[`vendor/extended-oberon/`](https://github.com/andreaspirklbauer/Oberon-extended)** — Andreas Pirklbauer's Extended Oberon distribution:
+**[`vendor/extended-oberon/`](https://github.com/andreaspirklbauer/Oberon-extended)** —
+Andreas Pirklbauer's Extended Oberon distribution; `Documentation/S3RISCinstall.tar.gz`
+is the stock EO disk image we extract from.
 
-- `Documentation/S3RISCinstall.tar.gz` ships a stock EO disk image.
-- `make eo-source` untars it and runs `extract-source` to populate `build/eo/` with the
-  upstream source tree.
-- We add our modules and apply our patches on top of `build/eo/.` to produce the final
-  `build/puck.dsk`.
+## Layout
+
+```
+oat/                          stateless Rust CLI (the only thing the agent shells out to)
+Mod/
+  ProjectOberon/              PO-flavored AgentTool.Mod + patches (System.Version, Oberon.Mod auto-load)
+  ExtendedOberon/             EO-flavored AgentTool.Mod + patch (Oberon.Mod auto-load)
+skill/oberon-agent/SKILL.md   agent-facing skill (single file; PO and EO covered)
+DiskImage/                    build outputs: ProjectOberon.dsk, ExtendedOberon.dsk (gitignored)
+vendor/                       submodules: risc-emu, extended-oberon
+Makefile                      `make po-image`, `make eo-image`, `make image` (both), `make oberon`
+```
 
 ## Quick start
 
 ### 1. Prereqs
 
-- Rust toolchain (`cargo`) — for the emulator + host tools.
-- [`uv`](https://docs.astral.sh/uv/) — for the Python proxy.
+- Rust toolchain (`cargo`).
 - Standard Unix tools: `make`, `tar`, `patch`.
-- `rlwrap` (optional) — readline in the agent REPL if present.
 
 ### 2. Clone with submodules
 
 ```
-git clone --recurse-submodules https://github.com/zxygentoo/puck.git
-cd puck
+git clone --recurse-submodules https://github.com/zxygentoo/oberon-agent.git
+cd oberon-agent
 ```
 
-If you forgot `--recurse-submodules`, run:
+If you forgot `--recurse-submodules`:
 
 ```
 git submodule update --init --recursive
 ```
 
-### 3. Build the disk image
+### 3. Build the image(s)
 
 ```
-make image
+make eo-image            # -> DiskImage/ExtendedOberon.dsk
+make po-image            # -> DiskImage/ProjectOberon.dsk
+make image               # both
 ```
 
-This walks the chain `tools` → `eo-source` → `image`: builds the Rust tools, extracts the
-EO source from the stock tarball, applies our patches, drops in `Puck.Mod`, and produces
-`build/puck.dsk`. Cold build ~3–5 min; warm rebuilds ~5 s.
+The chain `tools` → `<v>-source` → `<v>-image` builds the Rust tools, extracts source
+from the stock disk image, applies our patches, drops in `AgentTool.Mod`, and produces
+a bootable `.dsk`. Cold build ~3–5 min per variant; warm rebuilds ~5 s.
 
-### 4. Create the serial FIFOs (once)
-
-The host proxy and the emulator talk over two named pipes:
+### 4. Install `oat`
 
 ```
-mkfifo /tmp/p.in /tmp/p.out
+cargo install --path oat
 ```
 
-### 5. Run the emulator
+(Or `cargo build --release` inside `oat/` and add `oat/target/release` to your PATH.)
+
+### 5. Install the skill
 
 ```
-make oberon
+ln -s "$PWD/skill/oberon-agent" ~/.claude/skills/oberon-agent
 ```
 
-This opens the Oberon GUI window. `Puck.Mod` auto-starts at boot (our patched `Oberon.Mod`
-loads it after `System`), so the wire server is already listening on the serial line.
+(Or copy. Claude Code picks new skills up on the next prompt — no restart needed.)
 
-### 6. Run the agent
-
-In a second shell — `--model` (provider) and `--api-key` are required; pass them via
-`ARGS=`:
+### 6. Boot the emulator
 
 ```
-make puck ARGS="--model=deepseek --api-key=<your-key>"
+mkfifo /tmp/p.in /tmp/p.out          # once
+make oberon                          # default: EO; override with VARIANT=po
 ```
 
-Supported providers: `deepseek`, `openai`, `claude` (each ships with a sensible base
-URL + default model). You get a REPL: type a task, watch the proxy drive `puck`'s tools
-against the running emulator, and see the live Oberon Log streamed back.
+`AgentTool.Mod` auto-installs at boot (our patched `Oberon.Mod` loads it after
+`System`), so the wire server is listening as soon as you see the Oberon UI.
 
-For the full list of proxy flags (FIFO or PTY overrides, one-shot TASK, log path, …),
-run:
+### 7. Drive it
+
+In a Claude Code session:
 
 ```
-cd python && uv run puck --help
+$ oat --serial-in /tmp/p.in --serial-out /tmp/p.out check
+ok: Extended Oberon System  AP 1.1.26 (round-trip 8ms)
 ```
+
+Then ask the agent to do something — `act as oberon-agent and write a Hello.Mod that
+prints "hello"`. The skill takes over from there.
+
+For per-command help: `oat <subcommand> -h`.
 
 ## License
 

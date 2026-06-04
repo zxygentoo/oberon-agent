@@ -1,6 +1,6 @@
-//! puck-tools — stateless CLI driver for Puck.Mod on a live Extended Oberon
-//! emulator. See spec.md §4.2 (wire protocol) and skill/puck/SKILL.md (rules
-//! for the agent on the Oberon side).
+//! oat — oberon-agent-tool — stateless CLI driver for AgentTool.Mod on a
+//! live Project Oberon or Extended Oberon system. See `skill/oberon-agent/`
+//! for the agent-side rules.
 
 mod error;
 mod protocol;
@@ -17,11 +17,13 @@ use clap::{Args, Parser, Subcommand};
 use error::{Error, Result};
 use transport::Transport;
 
-const ABOUT: &str = "drive Puck.Mod on a live Extended Oberon emulator over a serial link";
+const ABOUT: &str =
+    "drive AgentTool.Mod on a live Project Oberon or Extended Oberon system over a serial link";
 
 const LONG_ABOUT: &str = "\
 A stateless CLI: each invocation opens the serial line, runs one command, prints its
-result, and exits. The wire protocol (PUT/GET/CALL) is documented in spec.md §4.2.";
+result, and exits. The wire protocol is PUT/GET/CALL — three opcodes between the host
+and AgentTool.Mod on the device.";
 
 const AFTER_HELP: &str = "\
 Exit codes:
@@ -30,13 +32,13 @@ Exit codes:
   2  Transport / protocol error (no connection, timeout, bad frame, bad args).
 
 Example:
-  mkfifo /tmp/p.in /tmp/p.out                                    # once
-  risc --serial-in /tmp/p.in --serial-out /tmp/p.out puck.dsk &  # boot emulator
-  puck-tools --serial-in /tmp/p.in --serial-out /tmp/p.out check";
+  mkfifo /tmp/p.in /tmp/p.out                                                    # once
+  risc --serial-in /tmp/p.in --serial-out /tmp/p.out DiskImage/ExtendedOberon.dsk &
+  oat --serial-in /tmp/p.in --serial-out /tmp/p.out check";
 
 #[derive(Parser)]
 #[command(
-    name = "puck-tools",
+    name = "oat",
     version,
     about = ABOUT,
     long_about = LONG_ABOUT,
@@ -84,12 +86,12 @@ struct SerialOpts {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// Verify the emulator is reachable.
+    /// Check that the wire is up and report the OS variant + version.
     Check,
 
     /// Read a file from the device; content -> stdout.
     Read {
-        /// File name, e.g. 'Puck.Mod'.
+        /// File name, e.g. 'AgentTool.Mod'.
         path: String,
     },
 
@@ -142,7 +144,8 @@ enum Cmd {
         name: String,
     },
 
-    /// Unload a module (EO safe-unload via System.Free /f).
+    /// Unload a module. EO: safe-unload via System.Free /f.
+    /// PO: System.Free (no hide-and-collect — dangling refs possible).
     Unload {
         /// Module name.
         name: String,
@@ -162,7 +165,7 @@ fn main() {
     let code = match run(cli) {
         Ok(()) => 0,
         Err(e) => {
-            eprintln!("puck-tools: error: {e}");
+            eprintln!("oat: error: {e}");
             e.exit_code()
         }
     };
@@ -205,10 +208,16 @@ fn dispatch(t: &Transport, cmd: Cmd) -> Result<()> {
 
 fn cmd_check(t: &Transport) -> Result<()> {
     let start = Instant::now();
-    let log = tools::list_modules(t)?;
+    let version = tools::version(t)?;
     let rtt = start.elapsed();
-    let count = tools::count_lines(&log);
-    println!("ok: {count} modules, round-trip {}ms", rtt.as_millis());
+    if version.is_empty() {
+        println!("ok: connected (round-trip {}ms)", rtt.as_millis());
+        println!("    warning: device reported no version string — image may lack the");
+        println!("    System.Version patch. Variant detection is unavailable; proceed at");
+        println!("    your own risk (PO-style unsafe unload may apply).");
+    } else {
+        println!("ok: {version} (round-trip {}ms)", rtt.as_millis());
+    }
     Ok(())
 }
 

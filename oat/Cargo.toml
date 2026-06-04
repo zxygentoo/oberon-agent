@@ -1,12 +1,12 @@
 [package]
-name = "puck-tools"
+name = "oat"
 version = "0.1.0"
 edition = "2021"
 license = "MIT"
-description = "Stateless CLI for driving Puck.Mod on a live Extended Oberon emulator."
+description = "oberon-agent-tool — stateless CLI for driving AgentTool.Mod on a live Project Oberon or Extended Oberon system."
 
 [[bin]]
-name = "puck-tools"
+name = "oat"
 path = "src/main.rs"
 
 [dependencies]

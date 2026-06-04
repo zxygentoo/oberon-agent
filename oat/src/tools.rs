@@ -1,8 +1,7 @@
 //! High-level operations on the Oberon device.
 //!
-//! Port of `python/src/puck/tools.py`. Each function turns one wire round-trip
-//! (or two for edit) into a typed `Result`. Generic over `Wire` so tests can
-//! plug in an in-memory fake.
+//! Each function turns one wire round-trip (or two for edit) into a typed
+//! `Result`. Generic over `Wire` so tests can plug in an in-memory fake.
 
 use crate::error::{Error, Result};
 use crate::protocol;
@@ -69,20 +68,21 @@ pub fn delete_file<W: Wire>(w: &W, path: &str) -> Result<()> {
 }
 
 pub fn list_files<W: Wire>(w: &W, prefix: &str) -> Result<String> {
-    call_log(w, "Puck.ListFiles", prefix)
+    call_log(w, "AgentTool.ListFiles", prefix)
 }
 
 pub fn list_modules<W: Wire>(w: &W) -> Result<String> {
-    call_log(w, "Puck.ListModules", "")
+    call_log(w, "AgentTool.ListModules", "")
 }
 
-/// Count non-blank lines in a TSV listing (used by `check`).
-pub fn count_lines(log: &str) -> usize {
-    log.lines().filter(|l| !l.trim().is_empty()).count()
+/// Read `System.Version` via `AgentTool.Version` (returns the trimmed log line).
+/// Empty when the image lacks the System.Version patch.
+pub fn version<W: Wire>(w: &W) -> Result<String> {
+    Ok(call_log(w, "AgentTool.Version", "")?.trim().to_string())
 }
 
 pub fn load_module<W: Wire>(w: &W, name: &str) -> Result<()> {
-    let log = call_log(w, "Puck.Load", name)?;
+    let log = call_log(w, "AgentTool.Load", name)?;
     if log.trim_start().starts_with("loaded") {
         return Ok(());
     }
@@ -91,10 +91,13 @@ pub fn load_module<W: Wire>(w: &W, name: &str) -> Result<()> {
 }
 
 pub fn unload_module<W: Wire>(w: &W, name: &str) -> Result<String> {
-    // EO safe-unload: `/f` hides modules with live refs (renames to *NAME) but
-    // refuses if other modules still import this one. The phrase
-    // "unloading failed" is the importers-still-loaded discriminator (matches
-    // the Python tool; see python/src/puck/tools.py for the rationale).
+    // We always pass `/f`. On EO that triggers safe-unload (hide-and-rename when
+    // live refs persist, full removal otherwise). On PO, `/f` tokenizes as junk
+    // that the System.Free scanner discards — so the module is unloaded the
+    // unsafe way (dangling refs are possible; the skill warns about this).
+    // The "unloading failed" phrase is EO-only; on PO an in-use refusal goes
+    // undetected here, which is why the skill insists on operator permission
+    // before any unload on PO.
     let args = format!("{name} /f");
     let log = call_log(w, "System.Free", &args)?;
     if log.contains("unloading failed") {
@@ -153,7 +156,7 @@ mod tests {
     /// fall through to the built-in behavior.
     type CallHandler = Box<dyn Fn(&str, &[u8]) -> Option<(u8, Vec<u8>)>>;
 
-    /// In-memory fake of the Oberon side. Mirrors `python/tests/fake.py`.
+    /// In-memory fake of the Oberon side.
     struct FakeWire {
         files: RefCell<HashMap<String, Vec<u8>>>,
         modules: RefCell<HashSet<String>>,
@@ -165,7 +168,7 @@ mod tests {
             Self {
                 files: RefCell::new(HashMap::new()),
                 modules: RefCell::new(
-                    ["System", "Oberon", "Puck"]
+                    ["System", "Oberon", "AgentTool"]
                         .iter()
                         .map(ToString::to_string)
                         .collect(),
@@ -221,11 +224,15 @@ mod tests {
                         (ST_OK, b"System.Free\n".to_vec())
                     }
                 }
-                "Puck.Load" => {
+                "AgentTool.Load" => {
                     self.modules.borrow_mut().insert(arg.to_string());
                     (ST_OK, format!("loaded {arg}\n").into_bytes())
                 }
-                "Puck.ListFiles" => {
+                "AgentTool.Version" => (
+                    ST_OK,
+                    b"Extended Oberon System  AP 1.1.26\n".to_vec(),
+                ),
+                "AgentTool.ListFiles" => {
                     let mut lines = Vec::new();
                     let mut names: Vec<_> =
                         self.files.borrow().keys().cloned().collect();
@@ -238,7 +245,7 @@ mod tests {
                     s.push('\n');
                     (ST_OK, s.into_bytes())
                 }
-                "Puck.ListModules" => {
+                "AgentTool.ListModules" => {
                     let mut mods: Vec<_> = self.modules.borrow().iter().cloned().collect();
                     mods.sort();
                     let mut s = mods
@@ -368,8 +375,22 @@ mod tests {
     #[test]
     fn list_modules_contains_seeded_modules() {
         let out = list_modules(&FakeWire::new()).unwrap();
-        assert!(out.contains("Puck\t"));
-        assert!(count_lines(&out) >= 3);
+        assert!(out.contains("AgentTool\t"));
+        assert!(out.lines().filter(|l| !l.trim().is_empty()).count() >= 3);
+    }
+
+    #[test]
+    fn version_returns_system_version_string() {
+        let v = version(&FakeWire::new()).unwrap();
+        assert!(v.contains("Extended Oberon"));
+    }
+
+    #[test]
+    fn version_handles_empty_payload() {
+        let w = FakeWire::new().with_call(|cmd, _| {
+            (cmd == "AgentTool.Version").then(|| (ST_OK, Vec::new()))
+        });
+        assert_eq!(version(&w).unwrap(), "");
     }
 
     #[test]
@@ -380,8 +401,8 @@ mod tests {
     #[test]
     fn load_module_failure_parses_res() {
         let w = FakeWire::new().with_call(|cmd, _| {
-            if cmd == "Puck.Load" {
-                Some((ST_OK, b"Puck.Load\n  res=2\n".to_vec()))
+            if cmd == "AgentTool.Load" {
+                Some((ST_OK, b"AgentTool.Load\n  res=2\n".to_vec()))
             } else {
                 None
             }

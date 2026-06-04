@@ -1,0 +1,218 @@
+---
+name: oberon-agent
+description: Drive a live Project Oberon 2013 or Extended Oberon system via the `oat` CLI — read/write/edit files, compile, load/unload modules, run commands. Use when the user asks you to act as the Oberon agent, write or modify Oberon code in the live system, or work on the Oberon side of this project. Requires the emulator running with `AgentTool.Mod` and a known serial line (PTY or FIFO pair).
+---
+
+# oberon-agent — code-on-a-live-Oberon-system skill
+
+You drive a LIVE Project Oberon 2013 (PO) or Extended Oberon (EO) system through one
+CLI: `oat`. Each invocation opens the serial line, sends one PUT/GET/CALL request to
+`AgentTool.Mod` on the device, prints the result, and exits. The agent loop lives in
+**you**; the device stays stateless across calls.
+
+## Prereqs
+
+- `oat` on PATH (`cargo install --path oat`, or `cargo build --release` in `oat/` and
+  add `oat/target/release` to PATH).
+- The user has booted the emulator separately (see this repo's `make oberon`) and knows
+  the serial line — either a PTY/serial device or a FIFO pair. Ask if it isn't in the
+  conversation already. No defaults: every invocation spells the flags out.
+
+Two connection forms; pick one:
+
+- `oat --serial /dev/pts/3 <CMD>`
+- `oat --serial-in /tmp/p.in --serial-out /tmp/p.out <CMD>`
+
+Keep them out of every command by stashing once at the start of the session:
+
+```bash
+OAT="oat --serial-in /tmp/p.in --serial-out /tmp/p.out"
+```
+
+then prefix calls: `$OAT check`, `$OAT read AgentTool.Mod`, …
+
+## Step 1: always `check` first
+
+```
+$ $OAT check
+ok: Extended Oberon System  AP 1.1.26 (round-trip 8ms)
+```
+
+`check` calls `AgentTool.Version`, which echoes `System.Version` back through the wire.
+Three response shapes you'll see:
+
+| `check` output starts with | meaning | what to do |
+|---|---|---|
+| `ok: Extended Oberon …` | EO image with our patches | safe path: EO has safe-unload via `/f` (see "Working rules") |
+| `ok: Project Oberon 2013…` | PO image with our patches | **WARNING: unload is unsafe on PO**. See "Unload on PO" below |
+| `ok: connected (… no version string …)` | image was not built with our System.Version patch | unknown variant. Tell the user and ask before any `unload`. Assume PO-style risks |
+| any error | wire is broken or emulator isn't running | stop and report; don't try to recover yourself |
+
+## Tools
+
+Every command exits **0** on success, **1** on tool-level error (file not found,
+compile failed, unload refused, trap), **2** on transport / protocol / argument error.
+Run `oat <cmd> -h` for per-command help.
+
+| command | use |
+|---|---|
+| `oat check` | Round-trip `AgentTool.Version` — smoke-test + identify variant. |
+| `oat read PATH` | Read a file; content → stdout. |
+| `oat write PATH < FILE` | Create or overwrite a file; content from stdin. |
+| `oat edit PATH OLD NEW` | str_replace; OLD must occur exactly once. |
+| `oat delete PATH` | Delete a file. |
+| `oat list-files [PREFIX]` | List files (TSV: name, size, date). |
+| `oat list-modules` | List loaded modules (TSV: name, refcnt, code addr). |
+| `oat compile NAME [-s]` | Compile via `ORP.Compile`; log → stdout. `-s` rewrites the `.smb` when the exported interface changed. |
+| `oat load NAME` | Load a compiled module. |
+| `oat unload NAME` | Unload a module. **Behavior differs by variant — see below.** |
+| `oat call CMD [ARGS]` | Run any `Mod.Proc` (escape hatch); Log delta → stdout. |
+
+### Common patterns
+
+**Create + run a new module:**
+
+```bash
+$OAT write Stars.Mod <<'EOF'
+MODULE Stars;
+  IMPORT Texts, Oberon;
+  VAR W: Texts.Writer;
+BEGIN Texts.OpenWriter(W);
+END Stars.
+EOF
+$OAT compile Stars.Mod      # see compiler log
+$OAT load Stars              # only if compile succeeded
+$OAT call Stars.Show         # run it
+```
+
+**Edit + recompile + reload** (replace a *running* module):
+
+```bash
+$OAT edit Stars.Mod 'old fragment' 'new fragment'
+$OAT compile Stars.Mod
+$OAT unload Stars            # see "Unload" section — PO needs operator permission first
+$OAT load Stars
+```
+
+**Multi-line edits** — go through `read` + `write`, not `edit`. Clearer and avoids
+shell-quoting traps:
+
+```bash
+$OAT read Stars.Mod > /tmp/Stars.Mod
+# modify /tmp/Stars.Mod locally
+$OAT write Stars.Mod < /tmp/Stars.Mod
+```
+
+## Unload: behavior by variant
+
+`oat unload NAME` invokes `System.Free NAME /f` on the device. What `/f` means and
+what unload actually does depends entirely on which variant `check` reported.
+
+### Extended Oberon: safe-unload
+
+`/f` triggers EO's safe-unload semantics:
+
+- If the module has no live references → fully removed.
+- If references persist (open viewers, heap objects of its types) → HIDDEN: renamed
+  to `*<name>`, memory kept valid, eventually reclaimed by `Modules.Collect`. A
+  subsequent `load` allocates a fresh block — safe live reload.
+- Fails only when other loaded modules still import this one. `oat unload` reports
+  this as an in-use refusal.
+
+EO unload is your normal hot-swap path. Use it freely.
+
+### Project Oberon 2013: unsafe-unload — operator permission required
+
+PO's `System.Free` does NOT have safe-unload. `/f` is silently discarded by the
+scanner; PO calls `Modules.Free(NAME)` which:
+
+- Refuses (silently, no log) if any importer still references the module.
+- Removes the module from the list if `refcnt = 0`, but does NOTHING about live
+  pointers: open viewers holding handles into the module's code, heap objects whose
+  type tags live in the module's data block. Those references now point into
+  freed/overwritten memory. The next message dispatch or GC trace through them
+  hangs the system.
+
+**Before any `unload` on PO, do this every time:**
+
+1. Tell the user, in plain language, what you're about to unload and why.
+2. Name the specific risk: any open viewer or live heap object from this module will
+   point into invalid memory after the unload, and the next interaction with it
+   hangs the system (no clean trap, requires emulator reboot).
+3. Ask explicitly for permission to proceed. Wait for a clear yes.
+4. If they say yes, run `oat unload NAME`.
+5. If they say no, suggest alternatives: keep editing without unload, reboot the
+   emulator + reload from disk, or run with the EO image instead.
+
+Also: `oat unload` cannot reliably detect an in-use refusal on PO (the EO-only
+"unloading failed" log phrase doesn't appear). Verify the unload took effect with
+`oat list-modules` afterward.
+
+### Unknown variant (no version reported)
+
+Treat it as PO — assume unsafe-unload, ask the user before every `unload`. The image
+may not have been built from this repo; tell the user and ask if they want to proceed
+at their own risk.
+
+## Working rules
+
+- **Source format.** Plain-ASCII Oberon source. Module `M` lives in `M.Mod`. Both
+  variants accept Oberon-07. EO additionally supports type-bound procedures and
+  FINAL blocks — use them on EO only.
+
+- **Compile/load cycle.** `compile` produces a `.rsc`; `load` brings it into memory.
+  To put new code into effect: `compile` (use `-s` when the exported interface
+  changed), then `load`. To replace a *running* module, `unload` first then `load`
+  (mind the variant — see above).
+
+- **FINAL blocks for clean tear-down (EO only).** For any module with viewers or
+  installed tasks, declare a FINAL block that closes them. The system runs FINAL
+  when the module is actually unloaded from memory (after Hide → Collect). Hold
+  references in module-level vars so FINAL can reach them:
+
+  ```oberon
+  BEGIN ... FINAL Viewers.Close(myV); Oberon.Remove(myT) END M.
+  ```
+
+  On PO there is no FINAL block. Modules wanting clean tear-down need an explicit
+  `Close*` command the operator (or you) must invoke before `unload`.
+
+- **Load-on-demand.** A module loads on demand: `call Mod.Proc` loads `Mod` from its
+  `.rsc` and runs `Proc`. To run an already-compiled module, just `call` it — no
+  `load` first, and don't `compile` unless you changed the source. Note:
+  `Mod.Open`-style commands open a NEW viewer on every call, so invoke them once.
+
+- **Viewers for human-facing output.** For modules that present output to the
+  operator, open a viewer with a system menu (e.g.
+  `MenuViewers.New(menuF, mainF, …)`) rather than writing to `Oberon.Log`. Reserve
+  the log for non-interactive helpers — introspection you'll read back via `call`,
+  automation.
+
+- **Don't `call System.Close` to close a viewer headlessly** — it tests
+  `Oberon.Par.vwr.dsc = Par.frame`, which the dummy frame in headless CALLs doesn't
+  satisfy, so it no-ops. Implement your module's own `Close*` command that holds a
+  saved viewer reference and calls `Viewers.Close` directly.
+
+- **Compiler diagnostics.** `compile`'s log is the raw ORP output: error lines
+  `pos <offset> <msg>` ending in `compilation FAILED`, or a success line. You hold
+  the source — localize from the messages, don't parse the log.
+
+- **Trap survival is not yet hardened.** A trapping `call` may kill the wire server.
+  If `check` stops responding after a `call`, the emulator probably needs a reboot —
+  tell the user.
+
+- **Prefer named tools.** Use `call` only as an escape hatch. The specific
+  subcommands (`read`, `write`, `compile`, `load`, …) carry typed errors and
+  consistent exit codes; `call` returns raw Log text you have to read.
+
+- **Concision.** Verify by compiling and then running. Don't echo the compiler log
+  back at the user — they see it. State what changed and what works.
+
+## When to use this skill
+
+Use when the user asks you to write, modify, or run Oberon code in the live system,
+or asks you to behave as the oberon-agent.
+
+Don't invoke for normal work on this repo's *host-side* code — the Rust `oat` CLI
+under `oat/`, the `Makefile`, docs — those are normal source files; edit them with
+the standard Read/Edit/Write tools.

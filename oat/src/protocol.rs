@@ -1,7 +1,8 @@
-//! Wire framing for the puck `PUT`/`GET`/`CALL` protocol.
+//! Wire framing for the `PUT`/`GET`/`CALL` protocol that `oat` speaks to
+//! `AgentTool.Mod` on the device.
 //!
-//! See `spec.md` §4.2. Host is master: build a REQUEST, send it, then read
-//! one RESPONSE. All multi-byte integers are unsigned little-endian.
+//! Host is master: build a REQUEST, send it, then read one RESPONSE. All
+//! multi-byte integers are unsigned little-endian.
 
 use crate::error::{Error, Result};
 

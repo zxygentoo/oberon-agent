@@ -1,7 +1,8 @@
-# build outputs: extracted eo-source, assembled tree, disk images
+# build outputs: extracted source, assembled tree, disk images
 build/
-# session logs (emulator + pucxy)
+DiskImage/
+# session logs (emulator)
 log/
-# cargo target dirs (risc-emu submodule, puck-tools)
+# cargo target dirs (risc-emu submodule, oat)
 vendor/*/target/
-rust/*/target/
+oat/target/

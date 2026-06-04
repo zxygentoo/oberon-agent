@@ -1,5 +1,5 @@
-MODULE Puck;  (*serial agent server for the puck coding agent -- Extended Oberon target. See spec section 4.4.*)
-  IMPORT SYSTEM, Disk, FileDir, Files, Modules, Display, Texts, Oberon;
+MODULE AgentTool;  (*serial agent server for the oberon-agent skill -- Extended Oberon target.*)
+  IMPORT SYSTEM, Disk, FileDir, Files, Modules, Display, Texts, Oberon, System;
 
   CONST
     data = -56; stat = -52;            (*RS232 MMIO; status bit0 = rx, bit1 = tx*)
@@ -102,6 +102,12 @@ MODULE Puck;  (*serial agent server for the puck coding agent -- Extended Oberon
 
   (* --- introspection helpers (write to Oberon.Log, unlike viewer-coupled originals) --- *)
 
+  PROCEDURE Version*;   (*echo System.Version to the Log; oat `check` parses it.*)
+  BEGIN Texts.WriteString(W, System.Version); Texts.WriteLn(W);
+    Texts.Append(Oberon.Log, W.buf)
+  END Version;
+
+
   PROCEDURE Prefixed(p, s: ARRAY OF CHAR): BOOLEAN;
     VAR i: INTEGER;
   BEGIN i := 0;
@@ -163,5 +169,5 @@ MODULE Puck;  (*serial agent server for the puck coding agent -- Extended Oberon
 BEGIN Texts.OpenWriter(W); Texts.OpenWriter(PW); NEW(parF);
   IF Oberon.Log = NIL THEN NEW(ownLog); Texts.Open(ownLog, ""); Oberon.OpenLog(ownLog) END;
   T := Oberon.NewTask(Task, 0); Oberon.Install(T);
-  Texts.WriteString(W, "Puck installed"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
-END Puck.
+  Texts.WriteString(W, "AgentTool installed"); Texts.WriteLn(W); Texts.Append(Oberon.Log, W.buf)
+END AgentTool.
