@@ -1,33 +1,91 @@
 # oberon-agent
 
-Turn any Claude-Code-shaped LLM agent into a coding agent that operates on — and modifies —
-a *live* Project Oberon 2013 or Extended Oberon system.
+> While people are busy putting agents into the OS, let's put the OS into the agent.
 
 ## The idea
 
-Oberon is unusual: modules can be compiled, loaded, and (on EO, safely) unloaded *in the
-running system*. With the right tools, an agent can change the live system from the
-inside — edit a module, recompile, swap the old code out, swap the new code in, and keep
-going without rebooting.
+Oberon is unusual: modules can be compiled, loaded, and unloaded *in the running
+system* — safely so on Extended Oberon. With the right tools an agent can change the
+live system from the inside: edit a module, recompile, swap the old code out, swap the
+new code in, keep going without rebooting. And the source for the entire system fits in
+a decent LLM's context window — do the math yourself.
 
-Two pieces wire this up:
+Two pieces make this work:
 
 - **`oat`** — *oberon-agent-tool* — a stateless Rust CLI. Each invocation opens the
   emulator's serial line, sends one PUT/GET/CALL request, prints the result, and exits.
 - **`skill/oberon-agent/SKILL.md`** — the agent-facing rules. Drop it into
   `~/.claude/skills/oberon-agent/SKILL.md` (or symlink) and any Claude-Code session
-  with `oat` on PATH becomes the agent.
+  with `oat` on PATH can drive a live Oberon.
 
 ```
-LLM agent (Claude Code) -- runs `oat` -- RS232 wire protocol -- AgentTool.Mod on Oberon
+LLM <-> agent (e.g. Claude Code) <--> oat <--> RS232 wire protocol <--> AgentTool.Mod (on Oberon)
 ```
 
-The agent loop lives in the LLM. The Oberon side stays a small, dumb request/response
-server (`Mod/{ProjectOberon,ExtendedOberon}/AgentTool.Mod`). `oat` translates wire ops
-into named subcommands the agent invokes from its prompt.
+## Quick start
 
-See [`skill/oberon-agent/SKILL.md`](skill/oberon-agent/SKILL.md) for the working rules
-and [`AGENTS.md`](AGENTS.md) for contributor notes.
+### 1. Dependencies
+
+- Rust toolchain: `cargo`
+- Unix tools: `make`, `tar`, `patch`, `curl`
+
+### 2. Clone repo with submodules
+
+```sh
+git clone --recurse-submodules https://github.com/zxygentoo/oberon-agent.git
+cd oberon-agent
+```
+
+If cloned without `--recurse-submodules`:
+
+```sh
+cd oberon-agent
+git submodule update --init --recursive
+```
+
+### 3. Build stuff
+
+```sh
+make
+```
+
+This will build:
+- the `oat` executable at `oat/target/release/oat`
+- the vendored host tools in `vendor/oberon-risc-emu-rs/target/release/`
+- disk images for Project Oberon and Extended Oberon in `DiskImage/`
+
+### 4. Install the skill
+
+Copy it to your skill folder, or link it:
+
+```sh
+ln -s "$PWD/skill/oberon-agent" ~/.claude/skills/oberon-agent
+```
+
+### 5. Install `oat` (optional)
+
+```sh
+cargo install --path oat
+```
+
+Optional because the oberon-agent skill will also look for `oat` in `.`, `./bin/`, and
+`./tools/` — or you can just tell your agent where the binary is.
+
+### 6. Boot the system
+
+Using the emulator:
+
+```sh
+mkfifo /tmp/p.in /tmp/p.out          # once
+make eo-emu                          # or `make po-emu`, or run `risc` directly
+```
+
+Or connect to an FPGA station over RS232.
+
+### 7. Play!
+
+In your favorite harness, just tell your agent to play with the live Oberon system —
+e.g. *"Use Hilbert.Mod as an example, add a Koch.Mod that draws a Koch curve."*
 
 ## Upstream pieces we depend on
 
@@ -46,91 +104,6 @@ and [`AGENTS.md`](AGENTS.md) for contributor notes.
 [`andreaspirklbauer/Oberon-extended`](https://github.com/andreaspirklbauer/Oberon-extended):
 the single file `Documentation/S3RISCinstall.tar.gz` lands in `build/` and is reused
 across builds. Requires `curl` or `wget`.
-
-## Layout
-
-```
-oat/                          stateless Rust CLI (the only thing the agent shells out to)
-Mod/
-  ProjectOberon/              PO-flavored AgentTool.Mod + patches (System.Version, Oberon.Mod auto-load)
-  ExtendedOberon/             EO-flavored AgentTool.Mod + patch (Oberon.Mod auto-load)
-skill/oberon-agent/SKILL.md   agent-facing skill (single file; PO and EO covered)
-DiskImage/                    build outputs: ProjectOberon.dsk, ExtendedOberon.dsk (gitignored)
-vendor/                       submodules: risc-emu, extended-oberon
-Makefile                      `make {po,eo}-image` (build), `make {po,eo}-emu` (boot), `make image` (both)
-```
-
-## Quick start
-
-### 1. Prereqs
-
-- Rust toolchain (`cargo`).
-- Standard Unix tools: `make`, `tar`, `patch`, `curl` (or `wget`).
-
-### 2. Clone with submodules
-
-```
-git clone --recurse-submodules https://github.com/zxygentoo/oberon-agent.git
-cd oberon-agent
-```
-
-If you forgot `--recurse-submodules`:
-
-```
-git submodule update --init --recursive
-```
-
-### 3. Build the image(s)
-
-```
-make eo-image            # -> DiskImage/ExtendedOberon.dsk
-make po-image            # -> DiskImage/ProjectOberon.dsk
-make image               # both
-```
-
-The chain `tools` → `<v>-source` → `<v>-image` builds the Rust tools, extracts source
-from the stock disk image, applies our patches, drops in `AgentTool.Mod`, and produces
-a bootable `.dsk`. Cold build ~3–5 min per variant; warm rebuilds ~5 s.
-
-### 4. Install `oat`
-
-```
-cargo install --path oat
-```
-
-(Or `cargo build --release` inside `oat/` and add `oat/target/release` to your PATH.)
-
-### 5. Install the skill
-
-```
-ln -s "$PWD/skill/oberon-agent" ~/.claude/skills/oberon-agent
-```
-
-(Or copy. Claude Code picks new skills up on the next prompt — no restart needed.)
-
-### 6. Boot the emulator
-
-```
-mkfifo /tmp/p.in /tmp/p.out          # once
-make eo-emu                          # or `make po-emu`
-```
-
-`AgentTool.Mod` auto-installs at boot (our patched `Oberon.Mod` loads it after
-`System`), so the wire server is listening as soon as you see the Oberon UI.
-
-### 7. Drive it
-
-In a Claude Code session:
-
-```
-$ oat --serial-in /tmp/p.in --serial-out /tmp/p.out check
-ok: Extended Oberon System  AP 1.1.26 (round-trip 8ms)
-```
-
-Then ask the agent to do something — `act as oberon-agent and write a Hello.Mod that
-prints "hello"`. The skill takes over from there.
-
-For per-command help: `oat <subcommand> -h`.
 
 ## License
 

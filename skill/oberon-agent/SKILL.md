@@ -217,12 +217,3 @@ own risk.
 
 - **Concision.** Verify by compiling and then running. Don't echo the compiler log
   back at the user — they see it. State what changed and what works.
-
-## When to use this skill
-
-Use when the user asks you to write, modify, or run Oberon code in a live Oberon
-system, or asks you to behave as the oberon-agent.
-
-Don't invoke for host-side code unrelated to the Oberon runtime — normal source
-files (Rust, C, Python, etc.) on the host don't go through `oat`. Use the standard
-Read/Edit/Write tools for those.

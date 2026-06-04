@@ -20,6 +20,9 @@ EXTRACT     := $(BIN)/extract-source
 OB2TXT      := $(BIN)/ob2txt
 TXT2OB      := $(BIN)/txt2ob
 
+OAT_BIN     := oat/target/release/oat
+OAT_SOURCES := $(wildcard oat/src/*.rs) oat/Cargo.toml oat/Cargo.lock
+
 PO_STOCK    := $(EMU)/DiskImage/Oberon-2020-08-18.dsk
 PO_SRC      := build/po
 PO_IMAGE    := DiskImage/ProjectOberon.dsk
@@ -41,7 +44,7 @@ EO_NEW_MODS := $(wildcard $(EO_MOD_DIR)/*.Mod)
 FIFO_IN     ?= /tmp/p.in
 FIFO_OUT    ?= /tmp/p.out
 
-.PHONY: image po-image eo-image tools po-source eo-source po-emu eo-emu check-fifos clean distclean
+.PHONY: image po-image eo-image tools oat po-source eo-source po-emu eo-emu check-fifos clean distclean
 
 # Default goal — bare `make` builds both images.
 .DEFAULT_GOAL := image
@@ -126,10 +129,15 @@ $(EO_TARBALL):
 
 # --- prerequisites -----------------------------------------------------------
 
-tools: $(RISC)
+tools: $(RISC) $(OAT_BIN)
 
 $(RISC):
 	cargo build --release --manifest-path $(EMU)/Cargo.toml --workspace --bins
+
+oat: $(OAT_BIN)
+
+$(OAT_BIN): $(OAT_SOURCES)
+	cargo build --release --manifest-path oat/Cargo.toml
 
 DiskImage:
 	@mkdir -p $@
@@ -165,4 +173,4 @@ clean:
 	rm -rf build DiskImage
 
 distclean: clean
-	rm -rf vendor/oberon-risc-emu-rs/target
+	rm -rf vendor/oberon-risc-emu-rs/target oat/target
