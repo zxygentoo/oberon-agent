@@ -51,16 +51,52 @@ pub fn write_file<R: Request>(req: &R, path: &str, content: &str) -> Result<()> 
     }
 }
 
+/// Replace a unique occurrence of `old` by `new` in a device file.
+///
+/// Normally one EDIT round-trip: the device matches OLD inside the file via
+/// its Texts piece list and splices NEW in atomically. OLD fragments larger
+/// than the device's fixed match buffer take the host-side fallback instead.
 pub fn edit_file<R: Request>(req: &R, path: &str, old: &str, new: &str) -> Result<()> {
+    let old_dev = to_oberon(old);
+    if old_dev.is_empty() || old_dev.len() > protocol::EDIT_OLD_LIMIT {
+        return edit_file_via_rw(req, path, old, new);
+    }
+    let r = req.send(&protocol::build_edit(path, &old_dev, &to_oberon(new))?)?;
+    match r.status {
+        protocol::ST_OK => Ok(()),
+        protocol::ST_NOT_FOUND => Err(Error::NotFound {
+            path: path.to_string(),
+        }),
+        protocol::ST_NO_MATCH => Err(Error::EditNotFound),
+        protocol::ST_NOT_UNIQUE => Err(Error::EditNotUnique {
+            count: le_count(&r.payload),
+        }),
+        s => Err(Error::BadStatus { status: s }),
+    }
+}
+
+/// Fallback for fragments EDIT cannot carry: full read-modify-write through
+/// GET and PUT. Fragments are normalized through the same LF/CR conversion
+/// the wire path applies, so both paths match in the same space.
+fn edit_file_via_rw<R: Request>(req: &R, path: &str, old: &str, new: &str) -> Result<()> {
+    let old = from_oberon(&to_oberon(old));
     let content = read_file(req, path)?;
-    let count = content.matches(old).count();
+    let count = content.matches(&old).count();
     if count == 0 {
         return Err(Error::EditNotFound);
     }
     if count > 1 {
         return Err(Error::EditNotUnique { count });
     }
-    write_file(req, path, &content.replacen(old, new, 1))
+    write_file(req, path, &content.replacen(&old, new, 1))
+}
+
+/// Occurrence count from an `ST_NOT_UNIQUE` payload (u32 LE); 0 if absent.
+fn le_count(payload: &[u8]) -> usize {
+    payload
+        .get(..4)
+        .and_then(|b| b.try_into().ok())
+        .map_or(0, |b| u32::from_le_bytes(b) as usize)
 }
 
 pub fn delete_file<R: Request>(req: &R, path: &str) -> Result<()> {
@@ -268,6 +304,45 @@ mod tests {
                 _ => (ST_OK, Vec::new()),
             }
         }
+
+        /// Mirrors `AgentTool`'s `DoEdit`: non-overlapping count, splice at
+        /// the first match, occurrence count in the not-unique payload.
+        fn dispatch_edit(&self, name: &str, old: &[u8], new: &[u8]) -> Response {
+            let empty = |status| Response {
+                status,
+                payload: Vec::new(),
+            };
+            if old.is_empty() || old.len() > protocol::EDIT_OLD_LIMIT {
+                return empty(protocol::ST_ERROR);
+            }
+            let Some(content) = self.files.borrow().get(name).cloned() else {
+                return empty(ST_NOT_FOUND);
+            };
+            let (mut count, mut first, mut i) = (0u32, None, 0);
+            while i + old.len() <= content.len() {
+                if &content[i..i + old.len()] == old {
+                    count += 1;
+                    first.get_or_insert(i);
+                    i += old.len(); // non-overlapping, like the device
+                } else {
+                    i += 1;
+                }
+            }
+            match (count, first) {
+                (0, _) | (_, None) => empty(protocol::ST_NO_MATCH),
+                (1, Some(at)) => {
+                    let mut out = content[..at].to_vec();
+                    out.extend_from_slice(new);
+                    out.extend_from_slice(&content[at + old.len()..]);
+                    self.files.borrow_mut().insert(name.to_string(), out);
+                    empty(ST_OK)
+                }
+                (n, _) => Response {
+                    status: protocol::ST_NOT_UNIQUE,
+                    payload: n.to_le_bytes().to_vec(),
+                },
+            }
+        }
     }
 
     impl Request for FakeDevice {
@@ -315,6 +390,25 @@ mod tests {
                     let (status, payload) = self.dispatch_call(&name, &frame[i..i + plen]);
                     Ok(Response { status, payload })
                 }
+                protocol::OP_EDIT => {
+                    let olen = u32::from_le_bytes([
+                        frame[i],
+                        frame[i + 1],
+                        frame[i + 2],
+                        frame[i + 3],
+                    ]) as usize;
+                    i += 4;
+                    let old = &frame[i..i + olen];
+                    i += olen;
+                    let nlen = u32::from_le_bytes([
+                        frame[i],
+                        frame[i + 1],
+                        frame[i + 2],
+                        frame[i + 3],
+                    ]) as usize;
+                    i += 4;
+                    Ok(self.dispatch_edit(&name, old, &frame[i..i + nlen]))
+                }
                 _ => panic!("bad op {op}"),
             }
         }
@@ -353,11 +447,58 @@ mod tests {
 
     #[test]
     fn edit_old_not_unique() {
+        // Count travels back in the ST_NOT_UNIQUE payload.
         let w = FakeDevice::new().with_file("M.Mod", b"a a\r");
         assert!(matches!(
             edit_file(&w, "M.Mod", "a", "b"),
             Err(Error::EditNotUnique { count: 2 })
         ));
+    }
+
+    #[test]
+    fn edit_missing_file_is_not_found() {
+        assert!(matches!(
+            edit_file(&FakeDevice::new(), "Gone.Mod", "a", "b"),
+            Err(Error::NotFound { .. })
+        ));
+    }
+
+    #[test]
+    fn edit_empty_new_deletes_old() {
+        let w = FakeDevice::new().with_file("M.Mod", b"keep drop keep\r");
+        edit_file(&w, "M.Mod", " drop", "").unwrap();
+        assert_eq!(w.files.borrow()["M.Mod"], b"keep keep\r");
+    }
+
+    #[test]
+    fn edit_multiline_old_matches_in_cr_space() {
+        // OLD spanning a line break: LF in the argument must match the CR
+        // stored on the device.
+        let w = FakeDevice::new().with_file("M.Mod", b"a;\rb;\rc;\r");
+        edit_file(&w, "M.Mod", "a;\nb;", "d;").unwrap();
+        assert_eq!(w.files.borrow()["M.Mod"], b"d;\rc;\r");
+    }
+
+    #[test]
+    fn edit_long_old_falls_back_to_get_put() {
+        // OLD beyond EDIT_OLD_LIMIT takes the host-side read-modify-write
+        // path; a line break inside OLD still matches (both paths normalize).
+        let long = format!("{}\n{}", "x".repeat(600), "y".repeat(600));
+        let content = format!("head\n{long}\ntail\n");
+        let w = FakeDevice::new();
+        write_file(&w, "Big.Txt", &content).unwrap();
+        edit_file(&w, "Big.Txt", &long, "z").unwrap();
+        assert_eq!(read_file(&w, "Big.Txt").unwrap(), "head\nz\ntail\n");
+    }
+
+    #[test]
+    fn edit_old_at_limit_takes_wire_path() {
+        // Exactly EDIT_OLD_LIMIT device bytes still fits the device buffer.
+        let old = "x".repeat(protocol::EDIT_OLD_LIMIT);
+        let w = FakeDevice::new();
+        write_file(&w, "Lim.Txt", &format!("a{old}b")).unwrap();
+        edit_file(&w, "Lim.Txt", &old, "-").unwrap();
+        assert_eq!(read_file(&w, "Lim.Txt").unwrap(), "a-b");
     }
 
     #[test]

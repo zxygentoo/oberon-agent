@@ -14,8 +14,10 @@ working rules.
   memory store. If you learn something worth keeping, write it down here.
 - **Design tools for the agent.** The CLI surface (`oat <subcommand>`) is explicit,
   named tools with structured results; the wire protocol (Oberon ↔ host) stays minimal
-  (`PUT`/`GET`/`CALL`). The CLI bridges them. Collapsing everything to one generic verb
-  is explicitly *not* a goal — favor clarity for the LLM that drives the tools.
+  (`PUT`/`GET`/`CALL`/`EDIT`). The CLI bridges them. Collapsing everything to one
+  generic verb is explicitly *not* a goal — favor clarity for the LLM that drives the
+  tools. Minimal ≠ frozen: `EDIT` earned its opcode (atomic on-device replace, no
+  full-file round-trip) rather than being smuggled through `CALL` par-text.
 
 ## Conventions
 
@@ -27,7 +29,14 @@ working rules.
   - Modifications to upstream modules live alongside each variant as
     `<Name>.Mod.patch` (unified LF-text diffs against the extracted source).
   - `AgentTool.Mod` exports: `ListFiles`, `ListModules`, `Load`, and `Version`
-    (echoes `System.Version` to the Log; the `oat check` smoke-test parses it).
+    (reports the variant to the Log; the `oat check` smoke-test parses it). EO echoes
+    the stock `System.Version`; PO hardcodes its string — PO2013 symbol files don't
+    carry string-constant characters, so an imported CONST reads back empty.
+  - The `EDIT` opcode matches OLD inside a fixed device buffer: `editLim` in
+    `AgentTool.Mod` must equal `EDIT_OLD_LIMIT` in `oat/src/protocol.rs` (1024).
+    Longer OLDs transparently fall back to the host-side GET+PUT path in tools.rs.
+    Protocol changes need image and `oat` rebuilt from the same tree — an old image
+    silently ignores unknown opcodes and the host times out.
 - **Host CLI.** Rust binary `oat` in `oat/` — single Cargo crate (package = `oat`,
   binary = `oat`). Deps: `clap` (4, derive), `libc` (POSIX I/O). Layering:
   `protocol.rs` is the shared vocabulary (frame codec, `Response`, the
@@ -64,6 +73,11 @@ Top-level `Makefile` drives everything; from a fresh `git clone --recurse-submod
   `/tmp/p.in`+`/tmp/p.out` (override with `FIFO_IN=` / `FIFO_OUT=`).
 - `make tools` → the vendored emulator + host tools (`cargo build --release
   --workspace --bins` inside `vendor/oberon-risc-emu-rs/`) and the `oat` binary.
+- `make test` → `test-unit` (cargo) + `test-po` + `test-eo`. The latter two run
+  `test/integration.sh`: boot the image in the emulator on a private FIFO pair and
+  drive the whole oat surface live (write/read/edit incl. error statuses and the
+  >1 KiB fallback, compile/call/list/delete, EO hot-swap). Needs a display for the
+  emulator window; skips cleanly without one.
 - `make clean` → `rm -rf build DiskImage`. `make distclean` → also wipes both cargo
   target dirs.
 

@@ -44,7 +44,7 @@ EO_NEW_MODS := $(wildcard $(EO_MOD_DIR)/*.Mod)
 FIFO_IN     ?= /tmp/p.in
 FIFO_OUT    ?= /tmp/p.out
 
-.PHONY: image po-image eo-image tools oat po-source eo-source po-emu eo-emu check-fifos clean distclean
+.PHONY: image po-image eo-image tools oat po-source eo-source po-emu eo-emu check-fifos clean distclean test test-unit test-po test-eo
 
 # Default goal — bare `make` builds both images.
 .DEFAULT_GOAL := image
@@ -166,6 +166,22 @@ check-fifos:
 	    exit 1; \
 	  fi; \
 	done
+
+# --- tests -------------------------------------------------------------------
+
+# `make test` = cargo unit tests + live integration battery on both images.
+# The integration script boots the emulator (needs a display; skips without
+# one) and drives oat against the running system: see test/integration.sh.
+test: test-unit test-po test-eo
+
+test-unit:
+	cargo test --manifest-path oat/Cargo.toml
+
+test-po: po-image
+	test/integration.sh $(PO_IMAGE) $(RISC) $(OAT_BIN)
+
+test-eo: eo-image
+	test/integration.sh $(EO_IMAGE) $(RISC) $(OAT_BIN)
 
 # --- cleanup -----------------------------------------------------------------
 

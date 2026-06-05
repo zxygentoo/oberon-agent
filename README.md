@@ -13,7 +13,8 @@ a decent LLM's context window — do the math yourself.
 Two pieces make this work:
 
 - **`oat`** — *oberon-agent-tool* — a stateless Rust CLI. Each invocation opens the
-  emulator's serial line, sends one PUT/GET/CALL request, prints the result, and exits.
+  emulator's serial line, sends one PUT/GET/CALL/EDIT request, prints the result, and
+  exits.
 - **`skill/oberon-agent/SKILL.md`** — the agent-facing rules. Drop it into
   `~/.claude/skills/oberon-agent/SKILL.md` (or symlink) and any Claude-Code session
   with `oat` on PATH can drive a live Oberon.

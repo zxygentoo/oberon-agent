@@ -1,5 +1,5 @@
-//! Wire framing for the `PUT`/`GET`/`CALL` protocol that `oat` speaks to
-//! `AgentTool.Mod` on the device.
+//! Wire framing for the `PUT`/`GET`/`CALL`/`EDIT` protocol that `oat` speaks
+//! to `AgentTool.Mod` on the device.
 //!
 //! Host is master: build a REQUEST, send it, then read one RESPONSE. All
 //! multi-byte integers are unsigned little-endian.
@@ -23,12 +23,23 @@ pub const SYNC_RESP: u8 = 0x5A;
 pub const OP_PUT: u8 = 1;
 pub const OP_GET: u8 = 2;
 pub const OP_CALL: u8 = 3;
+pub const OP_EDIT: u8 = 4;
 
 pub const ST_OK: u8 = 0;
 pub const ST_NOT_FOUND: u8 = 1;
 pub const ST_TRAPPED: u8 = 2;
 #[allow(dead_code)] // documented wire vocabulary; not used in current paths.
 pub const ST_ERROR: u8 = 3;
+/// EDIT: OLD does not occur in the file.
+pub const ST_NO_MATCH: u8 = 4;
+/// EDIT: OLD occurs more than once; payload = occurrence count (u32 LE).
+pub const ST_NOT_UNIQUE: u8 = 5;
+
+/// Longest OLD fragment (in device bytes, after LF -> CR conversion) that an
+/// EDIT frame may carry — the device matches inside a fixed buffer. Keep in
+/// sync with `editLim` in `Mod/*/AgentTool.Mod`. tools.rs falls back to the
+/// GET+PUT path for anything longer.
+pub const EDIT_OLD_LIMIT: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
@@ -69,6 +80,20 @@ pub fn build_call(cmd: &str, par: &[u8]) -> Result<Vec<u8>> {
     frame.extend_from_slice(&name);
     frame.extend_from_slice(&len);
     frame.extend_from_slice(par);
+    Ok(frame)
+}
+
+pub fn build_edit(name: &str, old: &[u8], new: &[u8]) -> Result<Vec<u8>> {
+    let name = name_field(name)?;
+    let old_len = u32::try_from(old.len()).unwrap_or(u32::MAX).to_le_bytes();
+    let new_len = u32::try_from(new.len()).unwrap_or(u32::MAX).to_le_bytes();
+    let mut frame = Vec::with_capacity(2 + name.len() + 8 + old.len() + new.len());
+    frame.extend_from_slice(&[SYNC_REQ, OP_EDIT]);
+    frame.extend_from_slice(&name);
+    frame.extend_from_slice(&old_len);
+    frame.extend_from_slice(old);
+    frame.extend_from_slice(&new_len);
+    frame.extend_from_slice(new);
     Ok(frame)
 }
 
@@ -144,6 +169,21 @@ mod tests {
             f,
             &[SYNC_REQ, OP_CALL, 3, b'A', b'.', b'B', 1, 0, 0, 0, b'p']
         );
+    }
+
+    #[test]
+    fn build_edit_carries_both_length_prefixed_fragments() {
+        let f = build_edit("X", b"ab", b"c").unwrap();
+        assert_eq!(
+            f,
+            &[SYNC_REQ, OP_EDIT, 1, b'X', 2, 0, 0, 0, b'a', b'b', 1, 0, 0, 0, b'c']
+        );
+    }
+
+    #[test]
+    fn build_edit_allows_empty_new() {
+        let f = build_edit("X", b"a", b"").unwrap();
+        assert_eq!(f, &[SYNC_REQ, OP_EDIT, 1, b'X', 1, 0, 0, 0, b'a', 0, 0, 0, 0]);
     }
 
     #[test]

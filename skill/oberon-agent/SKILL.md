@@ -6,8 +6,8 @@ description: Drive a live Project Oberon 2013 or Extended Oberon system via the 
 # oberon-agent
 
 You drive a LIVE Project Oberon 2013 (PO) or Extended Oberon (EO) system through one
-CLI: `oat`. Each invocation opens the serial line, sends one PUT/GET/CALL request to
-`AgentTool.Mod` on the device, prints the result, and exits. The agent loop lives in
+CLI: `oat`. Each invocation opens the serial line, sends one PUT/GET/CALL/EDIT request
+to `AgentTool.Mod` on the device, prints the result, and exits. The agent loop lives in
 **you**; the device stays stateless across calls.
 
 ## Startup — once per session

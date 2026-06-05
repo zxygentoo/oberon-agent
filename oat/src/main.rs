@@ -22,8 +22,8 @@ const ABOUT: &str =
 
 const LONG_ABOUT: &str = "\
 A stateless CLI: each invocation opens the serial line, runs one command, prints its
-result, and exits. The wire protocol is PUT/GET/CALL — three opcodes between the host
-and AgentTool.Mod on the device.";
+result, and exits. The wire protocol is PUT/GET/CALL/EDIT — four opcodes between the
+host and AgentTool.Mod on the device.";
 
 const AFTER_HELP: &str = "\
 Exit codes:
