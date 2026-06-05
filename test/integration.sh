@@ -177,6 +177,11 @@ if out=$(oat list-modules 2>&1) && grep -q "^Itest\b" <<<"$out"; then
 else
     bad "list-modules shows loaded Itest" "$out"
 fi
+if grep -q "^AgentProtocol\b" <<<"$out" && grep -q "^AgentTool\b" <<<"$out"; then
+    ok "protocol split: AgentTool + AgentProtocol both loaded"
+else
+    bad "protocol split: AgentTool + AgentProtocol both loaded" "$out"
+fi
 
 # --- Extended Oberon only: full hot-swap loop -----------------------------------
 

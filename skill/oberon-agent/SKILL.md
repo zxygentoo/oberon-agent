@@ -211,6 +211,11 @@ own risk.
   If `check` stops responding after a `call`, the emulator probably needs a reboot —
   tell the user.
 
+- **Never `unload` AgentTool or AgentProtocol.** They are the wire you are talking
+  through; unloading either kills the connection on the spot (and on PO leaves
+  dangling references). If they need replacing, that's an image rebuild, not a
+  live operation.
+
 - **Prefer named tools.** Use `call` only as an escape hatch. The specific
   subcommands (`read`, `write`, `compile`, `load`, …) carry typed errors and
   consistent exit codes; `call` returns raw Log text you have to read.

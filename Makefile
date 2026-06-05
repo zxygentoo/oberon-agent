@@ -23,6 +23,9 @@ TXT2OB      := $(BIN)/txt2ob
 OAT_BIN     := oat/target/release/oat
 OAT_SOURCES := $(wildcard oat/src/*.rs) oat/Cargo.toml oat/Cargo.lock
 
+# Modules shared verbatim by both variants (the AgentProtocol wire server).
+COMMON_MODS := $(wildcard Mod/Common/*.Mod)
+
 PO_STOCK    := $(EMU)/DiskImage/Oberon-2020-08-18.dsk
 PO_SRC      := build/po
 PO_IMAGE    := DiskImage/ProjectOberon.dsk
@@ -59,7 +62,7 @@ eo-image: tools $(EO_IMAGE)
 
 # --- PO image ----------------------------------------------------------------
 
-$(PO_IMAGE): $(RISC) $(PO_SRC)/.stamp $(PO_PATCHES) $(PO_NEW_MODS) | DiskImage
+$(PO_IMAGE): $(RISC) $(PO_SRC)/.stamp $(PO_PATCHES) $(PO_NEW_MODS) $(COMMON_MODS) | DiskImage
 	@rm -rf build/po-src && mkdir -p build/po-src
 	cp -a $(PO_SRC)/. build/po-src/
 	@for p in $(PO_PATCHES); do \
@@ -69,7 +72,7 @@ $(PO_IMAGE): $(RISC) $(PO_SRC)/.stamp $(PO_PATCHES) $(PO_NEW_MODS) | DiskImage
 	  $(TXT2OB) build/po-src/$$m.txt >/dev/null; \
 	  rm build/po-src/$$m.txt; \
 	done
-	@for f in $(PO_NEW_MODS); do \
+	@for f in $(COMMON_MODS) $(PO_NEW_MODS); do \
 	  name=$$(basename $$f); \
 	  cp $$f build/po-src/$$name.txt; \
 	  $(TXT2OB) build/po-src/$$name.txt >/dev/null; \
@@ -87,7 +90,7 @@ $(PO_SRC)/.stamp: $(PO_STOCK) | tools
 
 # --- EO image ----------------------------------------------------------------
 
-$(EO_IMAGE): $(RISC) $(EO_SRC)/.stamp $(EO_PATCHES) $(EO_NEW_MODS) | DiskImage
+$(EO_IMAGE): $(RISC) $(EO_SRC)/.stamp $(EO_PATCHES) $(EO_NEW_MODS) $(COMMON_MODS) | DiskImage
 	@rm -rf build/eo-src && mkdir -p build/eo-src
 	cp -a $(EO_SRC)/. build/eo-src/
 	@for p in $(EO_PATCHES); do \
@@ -97,7 +100,7 @@ $(EO_IMAGE): $(RISC) $(EO_SRC)/.stamp $(EO_PATCHES) $(EO_NEW_MODS) | DiskImage
 	  $(TXT2OB) build/eo-src/$$m.txt >/dev/null; \
 	  rm build/eo-src/$$m.txt; \
 	done
-	@for f in $(EO_NEW_MODS); do \
+	@for f in $(COMMON_MODS) $(EO_NEW_MODS); do \
 	  name=$$(basename $$f); \
 	  cp $$f build/eo-src/$$name.txt; \
 	  $(TXT2OB) build/eo-src/$$name.txt >/dev/null; \

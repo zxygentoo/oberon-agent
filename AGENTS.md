@@ -21,11 +21,25 @@ working rules.
 
 ## Conventions
 
-- **Oberon side.** Two variants, parallel layout under `Mod/`:
+- **Oberon side.** One shared protocol module plus a per-variant command module
+  under `Mod/`. The split is semantic, not textual: `AgentProtocol` owns the wire,
+  `AgentTool` owns the commands — duplication between the two variants is accepted;
+  the goal is per-file readability, not zero duplication.
+  - `Mod/Common/AgentProtocol.Mod` — the wire protocol, consumed verbatim by both
+    images: serial byte layer (private), frame parsing, the `PUT`/`GET`/`EDIT`
+    handlers, CALL framing, and the poll task. Its whole interface is `Executor`
+    (run a parsed command, return a status), `Start(exec)`, and the three status
+    consts. The variant never touches a serial byte.
   - `Mod/ExtendedOberon/AgentTool.Mod` — for Extended Oberon (Oberon-2 2020 Edition,
     Oberon-07 plus type-bound procedures, FINAL blocks, and safe module unloading).
   - `Mod/ProjectOberon/AgentTool.Mod` — for Wirth's Project Oberon 2013 (plain
     Oberon-07, no FINAL, no safe-unload).
+  - Each variant `AgentTool.Mod` = its `Exec` (`Oberon.SetPar` arity, `Oberon.Call`
+    vs `Modules.Call`, res mapping) + the named commands, which must live in the
+    module called `AgentTool` because oat invokes them by that name. Import-order
+    note: ORB requires modules referenced by an interface to be imported before the
+    module using them, so `AgentProtocol` (whose interface references `Texts`) is
+    imported last.
   - Modifications to upstream modules live alongside each variant as
     `<Name>.Mod.patch` (unified LF-text diffs against the extracted source).
   - `AgentTool.Mod` exports: `ListFiles`, `ListModules`, `Load`, and `Version`
@@ -33,7 +47,7 @@ working rules.
     the stock `System.Version`; PO hardcodes its string — PO2013 symbol files don't
     carry string-constant characters, so an imported CONST reads back empty.
   - The `EDIT` opcode matches OLD inside a fixed device buffer: `editLim` in
-    `AgentTool.Mod` must equal `EDIT_OLD_LIMIT` in `oat/src/protocol.rs` (1024).
+    `AgentProtocol.Mod` must equal `EDIT_OLD_LIMIT` in `oat/src/protocol.rs` (1024).
     Longer OLDs transparently fall back to the host-side GET+PUT path in tools.rs.
     Protocol changes need image and `oat` rebuilt from the same tree — an old image
     silently ignores unknown opcodes and the host times out.
@@ -108,7 +122,7 @@ Patches are stored as **LF unified diffs**. The build roundtrips through `ob2txt
 - **UI commands open a Viewer with a system menu** (e.g. via
   `MenuViewers.New(menuF, mainF, …)`), not a headless command that writes to
   `Oberon.Log`. Reserve plain `Oberon.Log` writers for non-interactive use —
-  automation, protocol handlers (e.g. `AgentTool.Task`), headless introspection.
+  automation, protocol handlers (e.g. `AgentProtocol.Task`), headless introspection.
 - Match the variant's idioms: type-bound procedures and FINAL blocks on EO only;
   PO modules wanting clean tear-down need explicit `Close*` commands.
 
