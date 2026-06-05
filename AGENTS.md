@@ -56,10 +56,12 @@ working rules.
   `protocol.rs` is the shared vocabulary (frame codec, `Response`, the `Status`
   enum — wire bytes stay private to the codec — and the `Request` seam);
   `transport.rs` implements `Request` over a PTY/FIFO pair; `tools.rs` codes
-  against `Request` and turns statuses into typed `Error`s; `main.rs` is the
-  composition root (clap → construct `Transport` → call `tools`). `tools` and
-  `transport` depend only on `protocol`, never on each other; `main` never
-  touches `protocol`.
+  against `Request` and turns statuses into typed `Error`s; `cli.rs` is the
+  whole CLI surface and the composition root (clap → construct `Transport` →
+  call `tools`), exporting exactly one function, `run()`; `main.rs` is the
+  process contract (run, prefix errors, map exit codes). `tools` and
+  `transport` depend only on `protocol`, never on each other; `cli` and `main`
+  never touch `protocol`.
 - **Skill.** `skill/oberon-agent/SKILL.md` — one file, covers both variants. Branches
   on `oat check`'s reported `System.Version` string. PO-specific: warns + asks for
   operator permission before any `unload` (PO has no safe-unload).
