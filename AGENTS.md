@@ -90,10 +90,10 @@ Top-level `Makefile` drives everything; from a fresh `git clone --recurse-submod
 - `make tools` → the vendored emulator + host tools (`cargo build --release
   --workspace --bins` inside `vendor/oberon-risc-emu-rs/`) and the `oat` binary.
 - `make test` → `test-unit` (cargo) + `test-po` + `test-eo`. The latter two run
-  `test/integration.sh`: boot the image in the emulator on a private FIFO pair and
-  drive the whole oat surface live (write/read/edit incl. error statuses and the
-  >1 KiB fallback, compile/call/list/delete, EO hot-swap). Needs a display for the
-  emulator window; skips cleanly without one.
+  `test/integration.sh`: boot the image in the emulator (`--headless`, no display
+  needed) on a private FIFO pair and drive the whole oat surface live (write/read/
+  edit incl. error statuses and the >1 KiB fallback, compile/call/list/delete,
+  EO hot-swap).
 - `make clean` → `rm -rf build DiskImage`. `make distclean` → also wipes both cargo
   target dirs.
 

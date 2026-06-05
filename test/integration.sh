@@ -1,22 +1,17 @@
 #!/usr/bin/env bash
-# Live integration test: boot IMAGE in the emulator on a private FIFO pair and
-# drive the full oat surface against the running system — write/read/edit
-# (wire path, fallback path, error statuses), compile, call, list, delete,
-# and on Extended Oberon a full edit -> compile -> unload -> reload hot swap.
+# Live integration test: boot IMAGE in the emulator (headless, no display
+# needed) on a private FIFO pair and drive the full oat surface against the
+# running system — write/read/edit (wire path, fallback path, error statuses),
+# compile, call, list, delete, and on Extended Oberon a full edit -> compile
+# -> unload -> reload hot swap.
 #
 # Usage: test/integration.sh IMAGE [RISC [OAT]]
-# Needs a display (the emulator opens a window); skips cleanly without one.
 
 set -u
 
 IMAGE=${1:?usage: integration.sh IMAGE [RISC [OAT]]}
 RISC=${2:-vendor/oberon-risc-emu-rs/target/release/risc}
 OAT_BIN=${3:-oat/target/release/oat}
-
-if [ -z "${DISPLAY:-}${WAYLAND_DISPLAY:-}" ]; then
-    echo "integration($IMAGE): SKIPPED — no display, and the emulator needs a window" >&2
-    exit 0
-fi
 
 T=$(mktemp -d)
 EMU_PID=
@@ -28,7 +23,11 @@ cleanup() {
 trap cleanup EXIT
 
 mkfifo "$T/p.in" "$T/p.out"
-"$RISC" --serial-in "$T/p.in" --serial-out "$T/p.out" "$IMAGE" >"$T/risc.log" 2>&1 &
+# Display env deliberately scrubbed: headless must never need (or open) a
+# window, and this keeps a regression to windowed mode from passing silently.
+env -u DISPLAY -u WAYLAND_DISPLAY \
+    "$RISC" --headless --serial-in "$T/p.in" --serial-out "$T/p.out" "$IMAGE" \
+    >"$T/risc.log" 2>&1 &
 EMU_PID=$!
 
 oat() { "$OAT_BIN" --serial-in "$T/p.in" --serial-out "$T/p.out" "$@"; }
