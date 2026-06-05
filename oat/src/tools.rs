@@ -4,7 +4,7 @@
 //! `Result`. Generic over `Request` so tests can plug in an in-memory fake.
 
 use crate::error::{Error, Result};
-use crate::protocol::{self, Request};
+use crate::protocol::{self, Request, Status};
 use crate::text::{from_oberon, to_oberon};
 
 /// Output of `compile_module`. The compiler log is always returned; `failed`
@@ -18,15 +18,15 @@ pub struct CompileResult {
 /// maps the device status to the command result once the log is printed.
 pub struct CallResult {
     pub log: String,
-    status: u8,
+    status: Status,
 }
 
 impl CallResult {
     pub fn outcome(&self) -> Result<()> {
         match self.status {
-            protocol::ST_OK => Ok(()),
-            protocol::ST_TRAPPED => Err(Error::Trapped),
-            s => Err(Error::BadStatus { status: s }),
+            Status::Ok => Ok(()),
+            Status::Trapped => Err(Error::Trapped),
+            s => Err(Error::BadStatus { status: s.byte() }),
         }
     }
 }
@@ -34,11 +34,11 @@ impl CallResult {
 pub fn read_file<R: Request>(req: &R, path: &str) -> Result<String> {
     let r = req.send(&protocol::build_get(path)?)?;
     match r.status {
-        protocol::ST_OK => Ok(from_oberon(&r.payload)),
-        protocol::ST_NOT_FOUND => Err(Error::NotFound {
+        Status::Ok => Ok(from_oberon(&r.payload)),
+        Status::NotFound => Err(Error::NotFound {
             path: path.to_string(),
         }),
-        s => Err(Error::BadStatus { status: s }),
+        s => Err(Error::BadStatus { status: s.byte() }),
     }
 }
 
@@ -47,7 +47,9 @@ pub fn write_file<R: Request>(req: &R, path: &str, content: &str) -> Result<()> 
     if r.ok() {
         Ok(())
     } else {
-        Err(Error::BadStatus { status: r.status })
+        Err(Error::BadStatus {
+            status: r.status.byte(),
+        })
     }
 }
 
@@ -63,15 +65,15 @@ pub fn edit_file<R: Request>(req: &R, path: &str, old: &str, new: &str) -> Resul
     }
     let r = req.send(&protocol::build_edit(path, &old_dev, &to_oberon(new))?)?;
     match r.status {
-        protocol::ST_OK => Ok(()),
-        protocol::ST_NOT_FOUND => Err(Error::NotFound {
+        Status::Ok => Ok(()),
+        Status::NotFound => Err(Error::NotFound {
             path: path.to_string(),
         }),
-        protocol::ST_NO_MATCH => Err(Error::EditNotFound),
-        protocol::ST_NOT_UNIQUE => Err(Error::EditNotUnique {
+        Status::NoMatch => Err(Error::EditNotFound),
+        Status::NotUnique => Err(Error::EditNotUnique {
             count: le_count(&r.payload),
         }),
-        s => Err(Error::BadStatus { status: s }),
+        s => Err(Error::BadStatus { status: s.byte() }),
     }
 }
 
@@ -91,7 +93,7 @@ fn edit_file_via_rw<R: Request>(req: &R, path: &str, old: &str, new: &str) -> Re
     write_file(req, path, &content.replacen(&old, new, 1))
 }
 
-/// Occurrence count from an `ST_NOT_UNIQUE` payload (u32 LE); 0 if absent.
+/// Occurrence count from a `Status::NotUnique` payload (u32 LE); 0 if absent.
 fn le_count(payload: &[u8]) -> usize {
     payload
         .get(..4)
@@ -159,7 +161,9 @@ pub fn compile_module<R: Request>(req: &R, name: &str, new_symbol: bool) -> Resu
     };
     let r = req.send(&protocol::build_call("ORP.Compile", &to_oberon(&par))?)?;
     if !r.ok() {
-        return Err(Error::BadStatus { status: r.status });
+        return Err(Error::BadStatus {
+            status: r.status.byte(),
+        });
     }
     let output = from_oberon(&r.payload);
     let failed = output.contains("compilation FAILED");
@@ -179,7 +183,9 @@ pub fn run_command<R: Request>(req: &R, cmd: &str, args: &str) -> Result<CallRes
 fn call_log<R: Request>(req: &R, cmd: &str, args: &str) -> Result<String> {
     let r = req.send(&protocol::build_call(cmd, &to_oberon(args))?)?;
     if !r.ok() {
-        return Err(Error::BadStatus { status: r.status });
+        return Err(Error::BadStatus {
+            status: r.status.byte(),
+        });
     }
     Ok(from_oberon(&r.payload))
 }
@@ -192,14 +198,14 @@ fn parse_res(log: &str) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{Response, ST_ERROR, ST_NOT_FOUND, ST_OK, ST_TRAPPED};
+    use crate::protocol::Response;
     use std::cell::RefCell;
     use std::collections::{HashMap, HashSet};
 
     /// Closure shape for ad-hoc CALL responses in a test setup: returns
     /// `Some((status, log))` to override the default dispatch, or `None` to
     /// fall through to the built-in behavior.
-    type CallHandler = Box<dyn Fn(&str, &[u8]) -> Option<(u8, Vec<u8>)>>;
+    type CallHandler = Box<dyn Fn(&str, &[u8]) -> Option<(Status, Vec<u8>)>>;
 
     /// In-memory fake of the Oberon side.
     struct FakeDevice {
@@ -227,12 +233,12 @@ mod tests {
             self
         }
 
-        fn with_call(mut self, f: impl Fn(&str, &[u8]) -> Option<(u8, Vec<u8>)> + 'static) -> Self {
+        fn with_call(mut self, f: impl Fn(&str, &[u8]) -> Option<(Status, Vec<u8>)> + 'static) -> Self {
             self.call = Some(Box::new(f));
             self
         }
 
-        fn dispatch_call(&self, cmd: &str, par: &[u8]) -> (u8, Vec<u8>) {
+        fn dispatch_call(&self, cmd: &str, par: &[u8]) -> (Status, Vec<u8>) {
             if let Some(f) = &self.call {
                 if let Some(out) = f(cmd, par) {
                     return out;
@@ -243,10 +249,10 @@ mod tests {
             match cmd {
                 "System.DeleteFiles" => {
                     if self.files.borrow_mut().remove(arg).is_some() {
-                        (ST_OK, format!("System.DeleteFiles\n{arg} deleting\n").into_bytes())
+                        (Status::Ok, format!("System.DeleteFiles\n{arg} deleting\n").into_bytes())
                     } else {
                         (
-                            ST_OK,
+                            Status::Ok,
                             format!("System.DeleteFiles\n{arg} deleting failed\n").into_bytes(),
                         )
                     }
@@ -262,19 +268,19 @@ mod tests {
                             "unloading"
                         };
                         (
-                            ST_OK,
+                            Status::Ok,
                             format!("System.Free\n{first} {action}\n").into_bytes(),
                         )
                     } else {
-                        (ST_OK, b"System.Free\n".to_vec())
+                        (Status::Ok, b"System.Free\n".to_vec())
                     }
                 }
                 "AgentTool.Load" => {
                     self.modules.borrow_mut().insert(arg.to_string());
-                    (ST_OK, format!("loaded {arg}\n").into_bytes())
+                    (Status::Ok, format!("loaded {arg}\n").into_bytes())
                 }
                 "AgentTool.Version" => (
-                    ST_OK,
+                    Status::Ok,
                     b"Extended Oberon System  AP 1.1.26\n".to_vec(),
                 ),
                 "AgentTool.ListFiles" => {
@@ -288,7 +294,7 @@ mod tests {
                     }
                     let mut s = lines.join("\n");
                     s.push('\n');
-                    (ST_OK, s.into_bytes())
+                    (Status::Ok, s.into_bytes())
                 }
                 "AgentTool.ListModules" => {
                     let mut mods: Vec<_> = self.modules.borrow().iter().cloned().collect();
@@ -299,9 +305,9 @@ mod tests {
                         .collect::<Vec<_>>()
                         .join("\n");
                     s.push('\n');
-                    (ST_OK, s.into_bytes())
+                    (Status::Ok, s.into_bytes())
                 }
-                _ => (ST_OK, Vec::new()),
+                _ => (Status::Ok, Vec::new()),
             }
         }
 
@@ -313,10 +319,10 @@ mod tests {
                 payload: Vec::new(),
             };
             if old.is_empty() || old.len() > protocol::EDIT_OLD_LIMIT {
-                return empty(protocol::ST_ERROR);
+                return empty(Status::Error);
             }
             let Some(content) = self.files.borrow().get(name).cloned() else {
-                return empty(ST_NOT_FOUND);
+                return empty(Status::NotFound);
             };
             let (mut count, mut first, mut i) = (0u32, None, 0);
             while i + old.len() <= content.len() {
@@ -329,16 +335,16 @@ mod tests {
                 }
             }
             match (count, first) {
-                (0, _) | (_, None) => empty(protocol::ST_NO_MATCH),
+                (0, _) | (_, None) => empty(Status::NoMatch),
                 (1, Some(at)) => {
                     let mut out = content[..at].to_vec();
                     out.extend_from_slice(new);
                     out.extend_from_slice(&content[at + old.len()..]);
                     self.files.borrow_mut().insert(name.to_string(), out);
-                    empty(ST_OK)
+                    empty(Status::Ok)
                 }
                 (n, _) => Response {
-                    status: protocol::ST_NOT_UNIQUE,
+                    status: Status::NotUnique,
                     payload: n.to_le_bytes().to_vec(),
                 },
             }
@@ -355,11 +361,11 @@ mod tests {
             match op {
                 protocol::OP_GET => match self.files.borrow().get(&name) {
                     Some(data) => Ok(Response {
-                        status: ST_OK,
+                        status: Status::Ok,
                         payload: data.clone(),
                     }),
                     None => Ok(Response {
-                        status: ST_NOT_FOUND,
+                        status: Status::NotFound,
                         payload: Vec::new(),
                     }),
                 },
@@ -375,7 +381,7 @@ mod tests {
                         .borrow_mut()
                         .insert(name, frame[i..i + dlen].to_vec());
                     Ok(Response {
-                        status: ST_OK,
+                        status: Status::Ok,
                         payload: Vec::new(),
                     })
                 }
@@ -447,7 +453,7 @@ mod tests {
 
     #[test]
     fn edit_old_not_unique() {
-        // Count travels back in the ST_NOT_UNIQUE payload.
+        // Count travels back in the Status::NotUnique payload.
         let w = FakeDevice::new().with_file("M.Mod", b"a a\r");
         assert!(matches!(
             edit_file(&w, "M.Mod", "a", "b"),
@@ -538,7 +544,7 @@ mod tests {
     #[test]
     fn version_handles_empty_payload() {
         let w = FakeDevice::new().with_call(|cmd, _| {
-            (cmd == "AgentTool.Version").then(|| (ST_OK, Vec::new()))
+            (cmd == "AgentTool.Version").then(|| (Status::Ok, Vec::new()))
         });
         assert_eq!(version(&w).unwrap(), "");
     }
@@ -552,7 +558,7 @@ mod tests {
     fn load_module_failure_parses_res() {
         let w = FakeDevice::new().with_call(|cmd, _| {
             if cmd == "AgentTool.Load" {
-                Some((ST_OK, b"AgentTool.Load\n  res=2\n".to_vec()))
+                Some((Status::Ok, b"AgentTool.Load\n  res=2\n".to_vec()))
             } else {
                 None
             }
@@ -568,7 +574,7 @@ mod tests {
         let w = FakeDevice::new().with_call(|cmd, _| {
             if cmd == "System.Free" {
                 Some((
-                    ST_OK,
+                    Status::Ok,
                     b"System.Free\n  X unloading failed, try /f option\n".to_vec(),
                 ))
             } else {
@@ -586,7 +592,7 @@ mod tests {
         let w = FakeDevice::new().with_call(|cmd, _| {
             if cmd == "ORP.Compile" {
                 Some((
-                    ST_OK,
+                    Status::Ok,
                     b"  compiling M\n  pos 5 undef\ncompilation FAILED\n".to_vec(),
                 ))
             } else {
@@ -606,7 +612,7 @@ mod tests {
         let w = FakeDevice::new().with_call(move |cmd, par| {
             if cmd == "ORP.Compile" {
                 saw.set(String::from_utf8_lossy(par).contains("M.Mod/s"));
-                Some((ST_OK, b"  compiling M new symbol file  10 4 ABCD\n".to_vec()))
+                Some((Status::Ok, b"  compiling M new symbol file  10 4 ABCD\n".to_vec()))
             } else {
                 None
             }
@@ -618,7 +624,7 @@ mod tests {
 
     #[test]
     fn run_command_reports_trapped_status() {
-        let w = FakeDevice::new().with_call(|_, _| Some((ST_TRAPPED, b"trap log\n".to_vec())));
+        let w = FakeDevice::new().with_call(|_, _| Some((Status::Trapped, b"trap log\n".to_vec())));
         let r = run_command(&w, "Bad.Cmd", "").unwrap();
         assert!(matches!(r.outcome(), Err(Error::Trapped)));
         assert_eq!(r.log, "trap log\n");
@@ -633,10 +639,10 @@ mod tests {
     #[test]
     fn compile_non_ok_status_is_bad_status() {
         let w = FakeDevice::new()
-            .with_call(|cmd, _| (cmd == "ORP.Compile").then(|| (ST_ERROR, Vec::new())));
+            .with_call(|cmd, _| (cmd == "ORP.Compile").then(|| (Status::Error, Vec::new())));
         assert!(matches!(
             compile_module(&w, "M.Mod", false),
-            Err(Error::BadStatus { status: ST_ERROR })
+            Err(Error::BadStatus { status }) if status == Status::Error.byte()
         ));
     }
 

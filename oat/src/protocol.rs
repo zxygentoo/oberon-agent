@@ -25,15 +25,49 @@ pub const OP_GET: u8 = 2;
 pub const OP_CALL: u8 = 3;
 pub const OP_EDIT: u8 = 4;
 
-pub const ST_OK: u8 = 0;
-pub const ST_NOT_FOUND: u8 = 1;
-pub const ST_TRAPPED: u8 = 2;
-#[allow(dead_code)] // documented wire vocabulary; not used in current paths.
-pub const ST_ERROR: u8 = 3;
-/// EDIT: OLD does not occur in the file.
-pub const ST_NO_MATCH: u8 = 4;
-/// EDIT: OLD occurs more than once; payload = occurrence count (u32 LE).
-pub const ST_NOT_UNIQUE: u8 = 5;
+/// Device status of a RESPONSE. The wire byte is an encoding detail private
+/// to this module — upper layers match on variants. `Other` carries status
+/// bytes this build doesn't know (newer device), kept for diagnostics.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Status {
+    Ok,
+    NotFound,
+    Trapped,
+    Error,
+    /// EDIT: OLD does not occur in the file.
+    NoMatch,
+    /// EDIT: OLD occurs more than once; payload = occurrence count (u32 LE).
+    NotUnique,
+    /// A status byte this build doesn't know.
+    Other(u8),
+}
+
+impl Status {
+    fn from_byte(b: u8) -> Self {
+        match b {
+            0 => Self::Ok,
+            1 => Self::NotFound,
+            2 => Self::Trapped,
+            3 => Self::Error,
+            4 => Self::NoMatch,
+            5 => Self::NotUnique,
+            b => Self::Other(b),
+        }
+    }
+
+    /// The wire byte — for error messages and tests that craft raw frames.
+    pub const fn byte(self) -> u8 {
+        match self {
+            Self::Ok => 0,
+            Self::NotFound => 1,
+            Self::Trapped => 2,
+            Self::Error => 3,
+            Self::NoMatch => 4,
+            Self::NotUnique => 5,
+            Self::Other(b) => b,
+        }
+    }
+}
 
 /// Longest OLD fragment (in device bytes, after LF -> CR conversion) that an
 /// EDIT frame may carry — the device matches inside a fixed buffer. Keep in
@@ -43,13 +77,13 @@ pub const EDIT_OLD_LIMIT: usize = 1024;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Response {
-    pub status: u8,
+    pub status: Status,
     pub payload: Vec<u8>,
 }
 
 impl Response {
     pub fn ok(&self) -> bool {
-        self.status == ST_OK
+        self.status == Status::Ok
     }
 }
 
@@ -141,7 +175,7 @@ where
         recv(&mut payload)?;
     }
     Ok(Response {
-        status: status[0],
+        status: Status::from_byte(status[0]),
         payload,
     })
 }
@@ -194,23 +228,32 @@ mod tests {
 
     #[test]
     fn read_response_parses_ok_with_payload() {
-        let bytes = vec![SYNC_RESP, ST_OK, 3, 0, 0, 0, b'a', b'b', b'c'];
+        let bytes = vec![SYNC_RESP, Status::Ok.byte(), 3, 0, 0, 0, b'a', b'b', b'c'];
         let r = read_with(&bytes).unwrap();
-        assert_eq!(r.status, ST_OK);
+        assert_eq!(r.status, Status::Ok);
         assert_eq!(r.payload, b"abc");
         assert!(r.ok());
     }
 
     #[test]
     fn read_response_handles_empty_payload() {
-        let r = read_with(&[SYNC_RESP, ST_OK, 0, 0, 0, 0]).unwrap();
+        let r = read_with(&[SYNC_RESP, Status::Ok.byte(), 0, 0, 0, 0]).unwrap();
         assert!(r.payload.is_empty());
     }
 
     #[test]
     fn read_response_rejects_bad_sync() {
-        let err = read_with(&[0x42, ST_OK, 0, 0, 0, 0]).unwrap_err();
+        let err = read_with(&[0x42, Status::Ok.byte(), 0, 0, 0, 0]).unwrap_err();
         assert!(matches!(err, Error::BadSync { got: 0x42, .. }));
+    }
+
+    #[test]
+    fn status_byte_roundtrips() {
+        for b in 0..=255 {
+            assert_eq!(Status::from_byte(b).byte(), b);
+        }
+        // Unknown bytes are preserved, not collapsed.
+        assert_eq!(Status::from_byte(0x2A), Status::Other(0x2A));
     }
 
     fn read_with(bytes: &[u8]) -> Result<Response> {

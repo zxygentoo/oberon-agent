@@ -53,10 +53,10 @@ working rules.
     silently ignores unknown opcodes and the host times out.
 - **Host CLI.** Rust binary `oat` in `oat/` — single Cargo crate (package = `oat`,
   binary = `oat`). Deps: `clap` (4, derive), `libc` (POSIX I/O). Layering:
-  `protocol.rs` is the shared vocabulary (frame codec, `Response`, the
-  `Request` seam); `transport.rs` implements `Request` over a PTY/FIFO pair;
-  `tools.rs` codes against `Request` and turns wire statuses into typed
-  `Error`s; `main.rs` is the
+  `protocol.rs` is the shared vocabulary (frame codec, `Response`, the `Status`
+  enum — wire bytes stay private to the codec — and the `Request` seam);
+  `transport.rs` implements `Request` over a PTY/FIFO pair; `tools.rs` codes
+  against `Request` and turns statuses into typed `Error`s; `main.rs` is the
   composition root (clap → construct `Transport` → call `tools`). `tools` and
   `transport` depend only on `protocol`, never on each other; `main` never
   touches `protocol`.
