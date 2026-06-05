@@ -25,6 +25,48 @@ pub struct Transport {
     timeout: Duration,
 }
 
+impl Request for Transport {
+    fn send(&self, frame: &[u8]) -> Result<Response> {
+        // Send. FIFO/PTY write buffers (tens of KB) absorb any module-sized
+        // payload, so a plain blocking write is safe — no flow control needed.
+        // `&File: Write` is the stable std impl that lets us write without &mut.
+        let mut w: &File = self.writer.as_ref().unwrap_or(&self.reader);
+        w.write_all(frame)?;
+
+        // Receive into caller-allocated buffers, polling the fd for each read.
+        read_response(|buf| self.recv_exact(buf))
+    }
+}
+
+impl Transport {
+    fn recv_exact(&self, buf: &mut [u8]) -> Result<()> {
+        let want = buf.len();
+        let mut filled = 0;
+        while filled < want {
+            if !poll_readable(self.reader.as_raw_fd(), self.timeout)? {
+                return Err(Error::Timeout {
+                    secs: self.timeout.as_secs_f64(),
+                    got: filled,
+                    want,
+                });
+            }
+            // `&File: Read` is the matching read impl; binding to `mut r`
+            // lets the method's `&mut self` autoref.
+            let mut r: &File = &self.reader;
+            match r.read(&mut buf[filled..]) {
+                Ok(0) => return Err(Error::Eof),
+                Ok(n) => filled += n,
+                Err(e) if e.kind() != io::ErrorKind::Interrupted => {
+                    return Err(Error::Io(e));
+                }
+                // EINTR: fall through and retry.
+                Err(_) => {}
+            }
+        }
+        Ok(())
+    }
+}
+
 pub fn open_path(path: &Path, timeout: Duration) -> Result<Transport> {
     let file = OpenOptions::new()
         .read(true)
@@ -68,48 +110,6 @@ fn open_fifo(path: &Path) -> Result<File> {
             path: path.to_path_buf(),
             source,
         })
-}
-
-impl Request for Transport {
-    fn send(&self, frame: &[u8]) -> Result<Response> {
-        // Send. FIFO/PTY write buffers (tens of KB) absorb any module-sized
-        // payload, so a plain blocking write is safe — no flow control needed.
-        // `&File: Write` is the stable std impl that lets us write without &mut.
-        let mut w: &File = self.writer.as_ref().unwrap_or(&self.reader);
-        w.write_all(frame)?;
-
-        // Receive into caller-allocated buffers, polling the fd for each read.
-        read_response(|buf| self.recv_exact(buf))
-    }
-}
-
-impl Transport {
-    fn recv_exact(&self, buf: &mut [u8]) -> Result<()> {
-        let want = buf.len();
-        let mut filled = 0;
-        while filled < want {
-            if !poll_readable(self.reader.as_raw_fd(), self.timeout)? {
-                return Err(Error::Timeout {
-                    secs: self.timeout.as_secs_f64(),
-                    got: filled,
-                    want,
-                });
-            }
-            // `&File: Read` is the matching read impl; binding to `mut r`
-            // lets the method's `&mut self` autoref.
-            let mut r: &File = &self.reader;
-            match r.read(&mut buf[filled..]) {
-                Ok(0) => return Err(Error::Eof),
-                Ok(n) => filled += n,
-                Err(e) if e.kind() != io::ErrorKind::Interrupted => {
-                    return Err(Error::Io(e));
-                }
-                // EINTR: fall through and retry.
-                Err(_) => {}
-            }
-        }
-        Ok(())
-    }
 }
 
 fn set_raw_mode(file: &File) -> io::Result<()> {

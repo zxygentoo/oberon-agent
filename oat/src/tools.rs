@@ -77,30 +77,6 @@ pub fn edit_file<R: Request>(req: &R, path: &str, old: &str, new: &str) -> Resul
     }
 }
 
-/// Fallback for fragments EDIT cannot carry: full read-modify-write through
-/// GET and PUT. Fragments are normalized through the same LF/CR conversion
-/// the wire path applies, so both paths match in the same space.
-fn edit_file_via_rw<R: Request>(req: &R, path: &str, old: &str, new: &str) -> Result<()> {
-    let old = from_oberon(&to_oberon(old));
-    let content = read_file(req, path)?;
-    let count = content.matches(&old).count();
-    if count == 0 {
-        return Err(Error::EditNotFound);
-    }
-    if count > 1 {
-        return Err(Error::EditNotUnique { count });
-    }
-    write_file(req, path, &content.replacen(&old, new, 1))
-}
-
-/// Occurrence count from a `Status::NotUnique` payload (u32 LE); 0 if absent.
-fn le_count(payload: &[u8]) -> usize {
-    payload
-        .get(..4)
-        .and_then(|b| b.try_into().ok())
-        .map_or(0, |b| u32::from_le_bytes(b) as usize)
-}
-
 pub fn delete_file<R: Request>(req: &R, path: &str) -> Result<()> {
     let log = call_log(req, "System.DeleteFiles", path)?;
     // System.Mod writes "<name> deleting" on success, "<name> deleting failed"
@@ -179,6 +155,30 @@ pub fn run_command<R: Request>(req: &R, cmd: &str, args: &str) -> Result<CallRes
 }
 
 // --- internals ---
+
+/// Fallback for fragments EDIT cannot carry: full read-modify-write through
+/// GET and PUT. Fragments are normalized through the same LF/CR conversion
+/// the wire path applies, so both paths match in the same space.
+fn edit_file_via_rw<R: Request>(req: &R, path: &str, old: &str, new: &str) -> Result<()> {
+    let old = from_oberon(&to_oberon(old));
+    let content = read_file(req, path)?;
+    let count = content.matches(&old).count();
+    if count == 0 {
+        return Err(Error::EditNotFound);
+    }
+    if count > 1 {
+        return Err(Error::EditNotUnique { count });
+    }
+    write_file(req, path, &content.replacen(&old, new, 1))
+}
+
+/// Occurrence count from a `Status::NotUnique` payload (u32 LE); 0 if absent.
+fn le_count(payload: &[u8]) -> usize {
+    payload
+        .get(..4)
+        .and_then(|b| b.try_into().ok())
+        .map_or(0, |b| u32::from_le_bytes(b) as usize)
+}
 
 fn call_log<R: Request>(req: &R, cmd: &str, args: &str) -> Result<String> {
     let r = req.send(&protocol::build_call(cmd, &to_oberon(args))?)?;

@@ -33,6 +33,8 @@ pub enum Error {
     Trapped,
 }
 
+pub type Result<T> = std::result::Result<T, Error>;
+
 impl Error {
     pub fn exit_code(&self) -> i32 {
         match self {
@@ -94,6 +96,24 @@ impl fmt::Display for Error {
     }
 }
 
+impl std::error::Error for Error {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::OpenFifo { source, .. } | Self::OpenSerial { source, .. } => Some(source),
+            Self::Io(e) => Some(e),
+            _ => None,
+        }
+    }
+}
+
+impl From<io::Error> for Error {
+    fn from(e: io::Error) -> Self {
+        Self::Io(e)
+    }
+}
+
+// --- Display helpers ---------------------------------------------------------
+
 fn fmt_open_fifo(f: &mut fmt::Formatter<'_>, path: &Path, source: &io::Error) -> fmt::Result {
     match source.kind() {
         io::ErrorKind::NotFound => write!(
@@ -137,24 +157,6 @@ fn res_hint(res: i32) -> Option<&'static str> {
         _ => None,
     }
 }
-
-impl std::error::Error for Error {
-    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
-        match self {
-            Self::OpenFifo { source, .. } | Self::OpenSerial { source, .. } => Some(source),
-            Self::Io(e) => Some(e),
-            _ => None,
-        }
-    }
-}
-
-impl From<io::Error> for Error {
-    fn from(e: io::Error) -> Self {
-        Self::Io(e)
-    }
-}
-
-pub type Result<T> = std::result::Result<T, Error>;
 
 #[cfg(test)]
 mod tests {

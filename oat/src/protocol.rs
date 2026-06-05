@@ -10,13 +10,6 @@
 
 use crate::error::{Error, Result};
 
-/// The seam between the typed world and the fd world: send one encoded
-/// REQUEST frame, get back the decoded RESPONSE. `transport::Transport` is
-/// the real implementation; tools.rs tests plug in an in-memory fake.
-pub trait Request {
-    fn send(&self, frame: &[u8]) -> Result<Response>;
-}
-
 // The raw wire encoding never leaves this module: production code only
 // encodes requests (build_*) and decodes responses (read_response); test
 // fakes that play the device go through parse_request / encode_response.
@@ -27,6 +20,19 @@ const OP_PUT: u8 = 1;
 const OP_GET: u8 = 2;
 const OP_CALL: u8 = 3;
 const OP_EDIT: u8 = 4;
+
+/// Longest OLD fragment (in device bytes, after LF -> CR conversion) that an
+/// EDIT frame may carry — the device matches inside a fixed buffer. Keep in
+/// sync with `editLim` in `Mod/Common/AgentProtocol.Mod`. tools.rs falls back
+/// to the GET+PUT path for anything longer.
+pub const EDIT_OLD_LIMIT: usize = 1024;
+
+/// The seam between the typed world and the fd world: send one encoded
+/// REQUEST frame, get back the decoded RESPONSE. `transport::Transport` is
+/// the real implementation; tools.rs tests plug in an in-memory fake.
+pub trait Request {
+    fn send(&self, frame: &[u8]) -> Result<Response>;
+}
 
 /// Device status of a RESPONSE. The wire byte is an encoding detail private
 /// to this module — upper layers match on variants. `Other` carries status
@@ -71,12 +77,6 @@ impl Status {
         }
     }
 }
-
-/// Longest OLD fragment (in device bytes, after LF -> CR conversion) that an
-/// EDIT frame may carry — the device matches inside a fixed buffer. Keep in
-/// sync with `editLim` in `Mod/*/AgentTool.Mod`. tools.rs falls back to the
-/// GET+PUT path for anything longer.
-pub const EDIT_OLD_LIMIT: usize = 1024;
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Response {
