@@ -198,7 +198,7 @@ fn parse_res(log: &str) -> Option<i32> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::Response;
+    use crate::protocol::{parse_request, ParsedRequest, Response};
     use std::cell::RefCell;
     use std::collections::{HashMap, HashSet};
 
@@ -353,13 +353,8 @@ mod tests {
 
     impl Request for FakeDevice {
         fn send(&self, frame: &[u8]) -> Result<Response> {
-            assert_eq!(frame[0], protocol::SYNC_REQ, "bad request sync");
-            let op = frame[1];
-            let nlen = frame[2] as usize;
-            let name = std::str::from_utf8(&frame[3..3 + nlen]).unwrap().to_string();
-            let mut i = 3 + nlen;
-            match op {
-                protocol::OP_GET => match self.files.borrow().get(&name) {
+            match parse_request(frame) {
+                ParsedRequest::Get { name } => match self.files.borrow().get(&name) {
                     Some(data) => Ok(Response {
                         status: Status::Ok,
                         payload: data.clone(),
@@ -369,53 +364,20 @@ mod tests {
                         payload: Vec::new(),
                     }),
                 },
-                protocol::OP_PUT => {
-                    let dlen = u32::from_le_bytes([
-                        frame[i],
-                        frame[i + 1],
-                        frame[i + 2],
-                        frame[i + 3],
-                    ]) as usize;
-                    i += 4;
-                    self.files
-                        .borrow_mut()
-                        .insert(name, frame[i..i + dlen].to_vec());
+                ParsedRequest::Put { name, data } => {
+                    self.files.borrow_mut().insert(name, data);
                     Ok(Response {
                         status: Status::Ok,
                         payload: Vec::new(),
                     })
                 }
-                protocol::OP_CALL => {
-                    let plen = u32::from_le_bytes([
-                        frame[i],
-                        frame[i + 1],
-                        frame[i + 2],
-                        frame[i + 3],
-                    ]) as usize;
-                    i += 4;
-                    let (status, payload) = self.dispatch_call(&name, &frame[i..i + plen]);
+                ParsedRequest::Call { cmd, par } => {
+                    let (status, payload) = self.dispatch_call(&cmd, &par);
                     Ok(Response { status, payload })
                 }
-                protocol::OP_EDIT => {
-                    let olen = u32::from_le_bytes([
-                        frame[i],
-                        frame[i + 1],
-                        frame[i + 2],
-                        frame[i + 3],
-                    ]) as usize;
-                    i += 4;
-                    let old = &frame[i..i + olen];
-                    i += olen;
-                    let nlen = u32::from_le_bytes([
-                        frame[i],
-                        frame[i + 1],
-                        frame[i + 2],
-                        frame[i + 3],
-                    ]) as usize;
-                    i += 4;
-                    Ok(self.dispatch_edit(&name, old, &frame[i..i + nlen]))
+                ParsedRequest::Edit { name, old, new } => {
+                    Ok(self.dispatch_edit(&name, &old, &new))
                 }
-                _ => panic!("bad op {op}"),
             }
         }
     }

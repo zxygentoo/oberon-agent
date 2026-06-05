@@ -152,7 +152,7 @@ fn poll_readable(fd: RawFd, timeout: Duration) -> Result<bool> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::protocol::{Request, Status, SYNC_RESP};
+    use crate::protocol::{encode_response, Request, Status};
     use std::os::unix::io::FromRawFd;
 
     fn pipe() -> (File, File) {
@@ -181,8 +181,7 @@ mod tests {
     #[test]
     fn send_writes_frame_and_decodes_response() {
         let (t, mut feed, mut sent) = harness(Duration::from_secs(1));
-        feed.write_all(&[SYNC_RESP, Status::Ok.byte(), 2, 0, 0, 0, b'h', b'i'])
-            .unwrap();
+        feed.write_all(&encode_response(Status::Ok, b"hi")).unwrap();
         let r = t.send(b"frame").unwrap();
         assert_eq!(r.status, Status::Ok);
         assert_eq!(r.payload, b"hi");
@@ -213,10 +212,11 @@ mod tests {
     fn response_split_across_writes_is_reassembled() {
         let (t, mut feed, _sent) = harness(Duration::from_secs(1));
         // Split mid-length-field so recv_exact has to loop within one buffer.
+        let frame = encode_response(Status::Ok, b"abc");
         let writer = std::thread::spawn(move || {
-            feed.write_all(&[SYNC_RESP, Status::Ok.byte(), 3, 0]).unwrap();
+            feed.write_all(&frame[..4]).unwrap();
             std::thread::sleep(Duration::from_millis(20));
-            feed.write_all(&[0, 0, b'a', b'b', b'c']).unwrap();
+            feed.write_all(&frame[4..]).unwrap();
         });
         let r = t.send(b"x").unwrap();
         assert_eq!(r.payload, b"abc");

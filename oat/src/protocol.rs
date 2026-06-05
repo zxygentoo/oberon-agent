@@ -17,13 +17,16 @@ pub trait Request {
     fn send(&self, frame: &[u8]) -> Result<Response>;
 }
 
-pub const SYNC_REQ: u8 = 0xA5;
-pub const SYNC_RESP: u8 = 0x5A;
+// The raw wire encoding never leaves this module: production code only
+// encodes requests (build_*) and decodes responses (read_response); test
+// fakes that play the device go through parse_request / encode_response.
+const SYNC_REQ: u8 = 0xA5;
+const SYNC_RESP: u8 = 0x5A;
 
-pub const OP_PUT: u8 = 1;
-pub const OP_GET: u8 = 2;
-pub const OP_CALL: u8 = 3;
-pub const OP_EDIT: u8 = 4;
+const OP_PUT: u8 = 1;
+const OP_GET: u8 = 2;
+const OP_CALL: u8 = 3;
+const OP_EDIT: u8 = 4;
 
 /// Device status of a RESPONSE. The wire byte is an encoding detail private
 /// to this module — upper layers match on variants. `Other` carries status
@@ -75,7 +78,7 @@ impl Status {
 /// GET+PUT path for anything longer.
 pub const EDIT_OLD_LIMIT: usize = 1024;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Response {
     pub status: Status,
     pub payload: Vec<u8>,
@@ -180,6 +183,60 @@ where
     })
 }
 
+// --- test-side wire helpers ---------------------------------------------
+// The device's half of the codec, for test fakes that play the device and
+// for transport tests that feed raw frames through the real decoder.
+// Compiled only under cfg(test): production code never parses requests.
+
+/// A REQUEST frame as the device sees it after parsing.
+#[cfg(test)]
+#[derive(Debug, PartialEq, Eq)]
+pub enum ParsedRequest {
+    Put { name: String, data: Vec<u8> },
+    Get { name: String },
+    Call { cmd: String, par: Vec<u8> },
+    Edit { name: String, old: Vec<u8>, new: Vec<u8> },
+}
+
+/// Parse a REQUEST frame. Panics on malformed input — test code.
+#[cfg(test)]
+pub fn parse_request(frame: &[u8]) -> ParsedRequest {
+    assert_eq!(frame[0], SYNC_REQ, "bad request sync");
+    let op = frame[1];
+    let nlen = frame[2] as usize;
+    let name = std::str::from_utf8(&frame[3..3 + nlen]).unwrap().to_string();
+    let mut i = 3 + nlen;
+    let mut blob = || {
+        let len = u32::from_le_bytes(frame[i..i + 4].try_into().unwrap()) as usize;
+        i += 4;
+        let b = frame[i..i + len].to_vec();
+        i += len;
+        b
+    };
+    match op {
+        OP_PUT => ParsedRequest::Put { name, data: blob() },
+        OP_GET => ParsedRequest::Get { name },
+        OP_CALL => ParsedRequest::Call { cmd: name, par: blob() },
+        OP_EDIT => ParsedRequest::Edit {
+            name,
+            old: blob(),
+            new: blob(),
+        },
+        op => panic!("bad op {op}"),
+    }
+}
+
+/// Encode a RESPONSE frame exactly as the device would.
+#[cfg(test)]
+pub fn encode_response(status: Status, payload: &[u8]) -> Vec<u8> {
+    let len = u32::try_from(payload.len()).unwrap().to_le_bytes();
+    let mut frame = Vec::with_capacity(6 + payload.len());
+    frame.extend_from_slice(&[SYNC_RESP, status.byte()]);
+    frame.extend_from_slice(&len);
+    frame.extend_from_slice(payload);
+    frame
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -254,6 +311,45 @@ mod tests {
         }
         // Unknown bytes are preserved, not collapsed.
         assert_eq!(Status::from_byte(0x2A), Status::Other(0x2A));
+    }
+
+    #[test]
+    fn parse_request_inverts_the_builders() {
+        assert_eq!(
+            parse_request(&build_get("M.Mod").unwrap()),
+            ParsedRequest::Get {
+                name: "M.Mod".into()
+            }
+        );
+        assert_eq!(
+            parse_request(&build_put("X", b"hi").unwrap()),
+            ParsedRequest::Put {
+                name: "X".into(),
+                data: b"hi".to_vec()
+            }
+        );
+        assert_eq!(
+            parse_request(&build_call("A.B", b"p").unwrap()),
+            ParsedRequest::Call {
+                cmd: "A.B".into(),
+                par: b"p".to_vec()
+            }
+        );
+        assert_eq!(
+            parse_request(&build_edit("X", b"ab", b"").unwrap()),
+            ParsedRequest::Edit {
+                name: "X".into(),
+                old: b"ab".to_vec(),
+                new: Vec::new()
+            }
+        );
+    }
+
+    #[test]
+    fn read_response_inverts_encode_response() {
+        let r = read_with(&encode_response(Status::NotUnique, &2u32.to_le_bytes())).unwrap();
+        assert_eq!(r.status, Status::NotUnique);
+        assert_eq!(r.payload, 2u32.to_le_bytes());
     }
 
     fn read_with(bytes: &[u8]) -> Result<Response> {
