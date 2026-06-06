@@ -52,7 +52,8 @@ working rules.
     Protocol changes need image and `oat` rebuilt from the same tree — an old image
     silently ignores unknown opcodes and the host times out.
 - **Host CLI.** Rust binary `oat` in `oat/` — single Cargo crate (package = `oat`,
-  binary = `oat`). Deps: `clap` (4, derive), `libc` (POSIX I/O). Layering:
+  binary = `oat`). Deps: `clap` (4, derive), `rustix` (safe wrappers for the
+  POSIX syscalls std doesn't cover). The crate `forbid`s unsafe. Layering:
   `protocol.rs` is the shared vocabulary (frame codec, `Response`, the `Status`
   enum — wire bytes stay private to the codec — and the `Request` seam);
   `transport.rs` implements `Request` over a PTY/FIFO pair; `tools.rs` codes
@@ -132,8 +133,9 @@ Patches are stored as **LF unified diffs**. The build roundtrips through `ob2txt
 
 - Prefer short, focused functions. If a block of logic has a clear purpose, extract
   it — even if it's only called once. Single-use helpers are fine.
-- `std::io::Read`/`Write` traits, `&File` impls — avoid raw `libc::read`/`write`
-  except where `std` genuinely doesn't cover it (`poll`, `tcsetattr`).
+- `std::io::Read`/`Write` traits, `&File` impls — and `rustix` (never raw `libc`)
+  for what `std` genuinely doesn't cover (`poll`, termios raw mode). The crate
+  has `#![forbid(unsafe_code)]`; keep it that way.
 - Strong types over stringly-typed flags. Specific `Error` variants over a single
   `Error::Other(String)`.
 - Clippy-pedantic clean is the bar.

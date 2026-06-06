@@ -1,18 +1,20 @@
 //! Serial transport over a PTY (raw mode) or a FIFO pair.
 //!
 //! Uses `std::io::{Read, Write}` via the stable `&File` impls for the bulk
-//! transfer. Raw `libc` only for the two operations std doesn't cover:
-//! `poll` (timed read availability) and `tcsetattr` (raw-mode the PTY).
-//! `Transport` is the real `protocol::Request`: it moves the bytes; the
-//! frame grammar itself lives in protocol.rs.
+//! transfer, and `rustix` for the two syscalls std doesn't cover: `poll`
+//! (timed read availability) and termios raw mode — safe wrappers, so the
+//! crate as a whole can forbid unsafe. `Transport` is the real
+//! `protocol::Request`: it moves the bytes; the frame grammar itself lives
+//! in protocol.rs.
 
 use std::fs::{File, OpenOptions};
 use std::io::{self, Read, Write};
-use std::os::unix::fs::OpenOptionsExt;
-use std::os::unix::io::{AsRawFd, RawFd};
 use std::path::Path;
-use std::ptr::{addr_of, addr_of_mut};
 use std::time::Duration;
+
+use rustix::event::{self, PollFd, PollFlags, Timespec};
+use rustix::fs::{Mode, OFlags};
+use rustix::termios::{self, OptionalActions};
 
 use crate::error::{Error, Result};
 use crate::protocol::{read_response, Request, Response};
@@ -43,7 +45,7 @@ impl Transport {
         let want = buf.len();
         let mut filled = 0;
         while filled < want {
-            if !poll_readable(self.reader.as_raw_fd(), self.timeout)? {
+            if !poll_readable(&self.reader, self.timeout)? {
                 return Err(Error::Timeout {
                     secs: self.timeout.as_secs_f64(),
                     got: filled,
@@ -68,19 +70,14 @@ impl Transport {
 }
 
 pub fn open_path(path: &Path, timeout: Duration) -> Result<Transport> {
-    let file = OpenOptions::new()
-        .read(true)
-        .write(true)
-        .custom_flags(libc::O_NOCTTY)
-        .open(path)
-        .map_err(|source| Error::OpenSerial {
-            path: path.to_path_buf(),
-            source,
-        })?;
-    set_raw_mode(&file).map_err(|source| Error::OpenSerial {
+    let open_err = |source: rustix::io::Errno| Error::OpenSerial {
         path: path.to_path_buf(),
-        source,
-    })?;
+        source: source.into(),
+    };
+    let fd = rustix::fs::open(path, OFlags::RDWR | OFlags::NOCTTY, Mode::empty())
+        .map_err(open_err)?;
+    let file = File::from(fd);
+    set_raw_mode(&file).map_err(open_err)?;
     Ok(Transport {
         reader: file,
         writer: None,
@@ -112,40 +109,21 @@ fn open_fifo(path: &Path) -> Result<File> {
         })
 }
 
-fn set_raw_mode(file: &File) -> io::Result<()> {
-    let fd = file.as_raw_fd();
-    let mut t: libc::termios = unsafe { std::mem::zeroed() };
-    // SAFETY: `fd` is a tty/serial fd we just opened; `t` is a fresh termios
-    // we own, sized correctly for the libc calls.
-    unsafe {
-        if libc::tcgetattr(fd, addr_of_mut!(t)) != 0 {
-            return Err(io::Error::last_os_error());
-        }
-        libc::cfmakeraw(addr_of_mut!(t));
-        if libc::tcsetattr(fd, libc::TCSANOW, addr_of!(t)) != 0 {
-            return Err(io::Error::last_os_error());
-        }
-    }
-    Ok(())
+fn set_raw_mode(file: &File) -> rustix::io::Result<()> {
+    let mut t = termios::tcgetattr(file)?;
+    t.make_raw();
+    termios::tcsetattr(file, OptionalActions::Now, &t)
 }
 
-fn poll_readable(fd: RawFd, timeout: Duration) -> Result<bool> {
-    let ms: i32 = i32::try_from(timeout.as_millis()).unwrap_or(i32::MAX);
-    let mut pfd = libc::pollfd {
-        fd,
-        events: libc::POLLIN,
-        revents: 0,
-    };
-    loop {
-        // SAFETY: `pfd` is a single owned pollfd; `n=1` matches the buffer length.
-        let r = unsafe { libc::poll(addr_of_mut!(pfd), 1, ms) };
-        if r >= 0 {
-            return Ok(r > 0);
-        }
-        let e = io::Error::last_os_error();
-        if e.kind() != io::ErrorKind::Interrupted {
-            return Err(Error::Io(e));
-        }
+fn poll_readable(file: &File, timeout: Duration) -> Result<bool> {
+    let ts = Timespec::try_from(timeout).unwrap_or(Timespec {
+        tv_sec: i64::MAX,
+        tv_nsec: 0,
+    });
+    let mut fds = [PollFd::new(file, PollFlags::IN)];
+    match rustix::io::retry_on_intr(|| event::poll(&mut fds, Some(&ts))) {
+        Ok(n) => Ok(n > 0),
+        Err(e) => Err(Error::Io(e.into())),
     }
 }
 
@@ -153,15 +131,11 @@ fn poll_readable(fd: RawFd, timeout: Duration) -> Result<bool> {
 mod tests {
     use super::*;
     use crate::protocol::{encode_response, Request, Status};
-    use std::os::unix::io::FromRawFd;
+    use std::os::fd::OwnedFd;
 
     fn pipe() -> (File, File) {
-        let mut fds = [0; 2];
-        // SAFETY: `fds` is the 2-slot buffer `pipe` requires; on success both
-        // fds are fresh, and each is owned by exactly one of the Files below.
-        assert_eq!(unsafe { libc::pipe(fds.as_mut_ptr()) }, 0, "pipe failed");
-        // SAFETY: valid fds we just created, not owned elsewhere.
-        unsafe { (File::from_raw_fd(fds[0]), File::from_raw_fd(fds[1])) }
+        let (r, w) = io::pipe().expect("pipe");
+        (File::from(OwnedFd::from(r)), File::from(OwnedFd::from(w)))
     }
 
     /// Transport wired to two in-memory pipes. Returns `(transport, feed,

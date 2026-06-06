@@ -5,6 +5,8 @@
 //! This file is only the process contract: run the CLI, prefix any error,
 //! map it to the documented exit code. Everything else lives in cli.rs.
 
+#![forbid(unsafe_code)]
+
 mod cli;
 mod error;
 mod protocol;
