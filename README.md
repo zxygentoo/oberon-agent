@@ -16,7 +16,7 @@ Two pieces make this work:
   emulator's serial line, sends one PUT/GET/CALL/EDIT request, prints the result, and
   exits.
 - **`skill/oberon-agent/SKILL.md`** — the agent-facing rules. Drop it into
-  `~/.claude/skills/oberon-agent/SKILL.md` (or symlink) and any Claude-Code session
+  `~/.claude/skills/oberon-agent/SKILL.md` (or symlink) and any Claude Code session
   with `oat` on PATH can drive a live Oberon.
 
 ```
@@ -55,6 +55,9 @@ This will build:
 - the vendored host tools in `vendor/oberon-risc-emu-rs/target/release/`
 - disk images for Project Oberon and Extended Oberon in `DiskImage/`
 
+(`make test` runs oat's unit suite plus a live battery against both images,
+booted headless in the emulator.)
+
 ### 4. Install the skill
 
 Copy it to your skill folder, or link it:
@@ -85,15 +88,26 @@ Or connect to an FPGA station over RS232.
 
 ### 7. Play!
 
-In your favorite harness, just tell your agent to play with the live Oberon system —
-e.g. *"Use Hilbert.Mod as an example, add a Koch.Mod that draws a Koch curve."*
+In your favorite harness, load the `/oberon-agent` skill. It starts by locating
+`oat` and connecting to the live Oberon — after that, just talk:
+
+- *"Read the relevant source and explain how Oberon's graphics subsystem works."*
+- *"Use Hilbert.Mod as an example, add a Koch.Mod that draws a Koch curve."*
+
+![Oberon desktop showing Koch.Draw and Hilbert.Draw](koch.png)
+
+You get the idea :)
+
+> [!TIP]
+> Use Extended Oberon for heavy modification — it has safe module unloading, so
+> the system is much harder to hang.
 
 ## Upstream pieces we depend on
 
 **[`vendor/oberon-risc-emu-rs/`](https://github.com/zxygentoo/oberon-risc-emu-rs)**
 (git submodule) — Rust port of Wirth's RISC5 emulator and host tools:
 
-- `risc` — runs the emulator (the GUI window).
+- `risc` — runs the emulator, windowed or `--headless`.
 - `extract-source` — pulls Oberon source out of a stock disk image.
 - `build-po-image` / `build-eo-image` — compile a source tree and produce a bootable
   `.dsk`. We use both — one per variant.
