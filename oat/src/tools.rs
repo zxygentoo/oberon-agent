@@ -73,6 +73,7 @@ pub fn edit_file<R: Request>(req: &R, path: &str, old: &str, new: &str) -> Resul
         Status::NotUnique => Err(Error::EditNotUnique {
             count: le_count(&r.payload),
         }),
+        Status::Trapped => Err(Error::Trapped),
         s => Err(Error::BadStatus { status: s.byte() }),
     }
 }
@@ -457,6 +458,25 @@ mod tests {
         write_file(&w, "Big.Txt", &content).unwrap();
         edit_file(&w, "Big.Txt", &long, "z").unwrap();
         assert_eq!(read_file(&w, "Big.Txt").unwrap(), "head\nz\ntail\n");
+    }
+
+    #[test]
+    fn edit_trapped_status_maps_to_trapped() {
+        // The device's trap recovery answers EDIT with stTrapped; FakeDevice
+        // mirrors a healthy device, so stub the seam directly.
+        struct AlwaysTrapped;
+        impl Request for AlwaysTrapped {
+            fn send(&self, _frame: &[u8]) -> Result<Response> {
+                Ok(Response {
+                    status: Status::Trapped,
+                    payload: Vec::new(),
+                })
+            }
+        }
+        assert!(matches!(
+            edit_file(&AlwaysTrapped, "M.Mod", "a", "b"),
+            Err(Error::Trapped)
+        ));
     }
 
     #[test]

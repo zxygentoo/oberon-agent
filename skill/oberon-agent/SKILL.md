@@ -207,9 +207,12 @@ own risk.
   `pos <offset> <msg>` ending in `compilation FAILED`, or a success line. You hold
   the source — localize from the messages, don't parse the log.
 
-- **Trap survival is not yet hardened.** A trapping `call` may kill the wire server.
-  If `check` stops responding after a `call`, the emulator probably needs a reboot —
-  tell the user.
+- **Traps are survivable.** A `call` (or `edit`) that traps reports cleanly: exit 1,
+  the Oberon `TRAP` line in the printed log, and the wire stays up — the device
+  reinstalls its serial task and completes the exchange. No reboot needed; run
+  `check` if in doubt. Residual: a trap landing exactly during a response
+  transmission can still garble that one exchange — the next `oat` invocation
+  starts clean.
 
 - **Never `unload` AgentTool or AgentProtocol.** They are the wire you are talking
   through; unloading either kills the connection on the spot (and on PO leaves

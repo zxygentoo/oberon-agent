@@ -182,6 +182,41 @@ else
     bad "protocol split: AgentTool + AgentProtocol both loaded" "$out"
 fi
 
+# --- trap survival ---------------------------------------------------------------
+# A command that traps used to kill the wire task for good (Oberon.Reset removes
+# the active task). Now the watchdog reinstalls it and the in-flight recovery
+# completes the exchange with stTrapped + the TRAP line from the Log.
+
+oat write Crash.Mod <<'EOF' >/dev/null
+MODULE Crash;
+  VAR a: ARRAY 4 OF INTEGER; n: INTEGER;
+  PROCEDURE Go*;
+  BEGIN a[n + 7] := 0
+  END Go;
+BEGIN n := 0
+END Crash.
+EOF
+expect_ok "trap survival: compile Crash.Mod" oat compile Crash.Mod
+
+trap_call() { # desc — call Crash.Go, expect exit 1 + TRAP line + trapped error
+    local desc=$1 rc=0
+    out=$(oat call Crash.Go 2>&1) || rc=$?
+    if [ "$rc" = 1 ] && grep -q "TRAP" <<<"$out" && grep -q "trapped" <<<"$out"; then
+        ok "$desc"
+    else
+        bad "$desc" "rc=$rc: $out"
+    fi
+}
+trap_call "trap survival: trapping call reports TRAP, exit 1"
+expect_ok "trap survival: wire alive after trap" oat check
+trap_call "trap survival: second trap also reported"
+expect_ok "trap survival: wire alive after second trap" oat check
+printf 'post-trap\n' | oat write Post.Txt >/dev/null
+expect_content "trap survival: write/read roundtrip after traps" Post.Txt <<'EOF'
+post-trap
+EOF
+expect_ok "trap survival: delete Post.Txt" oat delete Post.Txt
+
 # --- Extended Oberon only: full hot-swap loop -----------------------------------
 
 if grep -q "Extended Oberon" <<<"$check_out"; then
@@ -201,6 +236,7 @@ fi
 expect_ok "delete Itest.Mod" oat delete Itest.Mod
 expect_ok "delete Dup.Txt" oat delete Dup.Txt
 expect_ok "delete Big.Txt" oat delete Big.Txt
+expect_ok "delete Crash.Mod" oat delete Crash.Mod
 expect_err "read deleted file -> exit 1" "file not found" oat read Itest.Mod
 
 # --- summary ---------------------------------------------------------------------

@@ -51,6 +51,13 @@ working rules.
     Longer OLDs transparently fall back to the host-side GET+PUT path in tools.rs.
     Protocol changes need image and `oat` rebuilt from the same tree — an old image
     silently ignores unknown opcodes and the host times out.
+  - Trap survival: `Oberon.Reset` removes the *active* task when a handler traps,
+    which used to kill the wire. `AgentProtocol` runs a one-line watchdog task
+    (`Oberon.Install` is idempotent) that reinstalls the serial task, and an
+    in-flight flag lets the revived task finish the interrupted exchange with
+    `stTrapped` + the Log delta (which carries the `TRAP` line). No upstream
+    patch. Residual: a trap during response *transmission* still costs that one
+    exchange — the stateless CLI recovers on the next invocation.
 - **Host CLI.** Rust binary `oat` in `oat/` — single Cargo crate (package = `oat`,
   binary = `oat`). Deps: `clap` (4, derive), `rustix` (safe wrappers for the
   POSIX syscalls std doesn't cover). The crate `forbid`s unsafe. Layering:
