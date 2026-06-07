@@ -42,6 +42,10 @@ OAT="$OAT_BIN --serial-in /tmp/p.in --serial-out /tmp/p.out"
 (Use whatever paths the user gave you — `/tmp/p.in` / `/tmp/p.out` is a common
 convention but don't assume it.)
 
+On real RS232 hardware, transfers are slow — a 50 KB `read` takes ~26 s at
+19200 baud. Add `--timeout <secs>` to every call accordingly; the 15 s default
+assumes the emulator.
+
 ### 3. Run `oat check` and read the result
 
 ```
@@ -104,8 +108,10 @@ $OAT unload Stars           # see "Unload" — PO needs operator permission firs
 $OAT load Stars
 ```
 
-**Multi-line edits** — go through `read` + `write`, not `edit`. Clearer and avoids
-shell-quoting traps:
+**Multi-line edits** — `edit` handles them: OLD may span lines, and the device
+matches and splices atomically in one round trip (OLD up to 1 KiB; longer falls
+back transparently to a read-modify-write). Mind your shell quoting. For large
+rewrites or many scattered changes in one file, `read` + `write` is simpler:
 
 ```bash
 $OAT read Stars.Mod > /tmp/Stars.Mod

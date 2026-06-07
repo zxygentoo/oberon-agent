@@ -34,8 +34,12 @@ PO_PATCHES  := $(wildcard $(PO_MOD_DIR)/*.patch)
 PO_NEW_MODS := $(wildcard $(PO_MOD_DIR)/*.Mod)
 
 # EO stock disk image: downloaded from upstream (not vendored — the full
-# Oberon-extended repo is ~12 MB but we only consume this one file).
-EO_TARBALL_URL := https://github.com/andreaspirklbauer/Oberon-extended/raw/refs/heads/master/Documentation/S3RISCinstall.tar.gz
+# Oberon-extended repo is ~12 MB but we only consume this one file). The URL is
+# pinned to a known-good commit (git content addressing makes it immutable) and
+# the checksum is verified — to move to a newer upstream, update both together.
+EO_TARBALL_COMMIT := bf51d8087e04838a1c474ec750004e80055337a6
+EO_TARBALL_SHA256 := 3354a7d449377f7defe8df7d3d27b5972a35bb48ebfeb8e3e73762b28c810d12
+EO_TARBALL_URL := https://github.com/andreaspirklbauer/Oberon-extended/raw/$(EO_TARBALL_COMMIT)/Documentation/S3RISCinstall.tar.gz
 EO_TARBALL  := build/S3RISCinstall.tar.gz
 EO_STOCK    := build/eo-stock.dsk
 EO_SRC      := build/eo
@@ -123,12 +127,15 @@ $(EO_TARBALL):
 	@mkdir -p build
 	@echo "downloading $(EO_TARBALL_URL)"
 	@if command -v curl >/dev/null 2>&1; then \
-	  curl -fsSL -o $@ $(EO_TARBALL_URL); \
+	  curl -fsSL -o $@.tmp $(EO_TARBALL_URL); \
 	elif command -v wget >/dev/null 2>&1; then \
-	  wget -q -O $@ $(EO_TARBALL_URL); \
+	  wget -q -O $@.tmp $(EO_TARBALL_URL); \
 	else \
 	  echo "need curl or wget to fetch the EO stock image" >&2; exit 1; \
 	fi
+	@echo "$(EO_TARBALL_SHA256)  $@.tmp" | sha256sum --check --quiet - || \
+	  { echo "$@: checksum mismatch — refusing to build from it" >&2; rm -f $@.tmp; exit 1; }
+	@mv $@.tmp $@
 
 # --- prerequisites -----------------------------------------------------------
 

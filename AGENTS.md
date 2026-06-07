@@ -80,7 +80,10 @@ working rules.
     `DiskImage/Oberon-2020-08-18.dsk`.
   - **EO stock image** — downloaded by `make` to `build/S3RISCinstall.tar.gz` from
     upstream (`andreaspirklbauer/Oberon-extended`), not vendored. The full EO repo
-    is ~12 MB and we only consume this single file.
+    is ~12 MB and we only consume this single file. The URL is pinned to a
+    known-good commit and sha256-verified (`EO_TARBALL_COMMIT` /
+    `EO_TARBALL_SHA256` in the Makefile — bump both together to take a newer
+    upstream).
 - **Build outputs** (gitignored): `build/` (extracted source per variant + assembled
   trees), `DiskImage/` (`ProjectOberon.dsk`, `ExtendedOberon.dsk`), `oat/target/`.
 
