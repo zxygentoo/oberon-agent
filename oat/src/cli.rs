@@ -44,6 +44,20 @@ struct Cli {
     #[arg(long, value_name = "SECS", default_value_t = 15.0)]
     timeout: f64,
 
+    /// Baud rate for a real serial device (--serial). Ignored for FIFO pairs.
+    #[arg(long, value_name = "RATE", default_value_t = 19200)]
+    baud: u32,
+
+    /// Inter-byte ("character") delay for a real serial device (--serial), in microseconds.
+    /// The FPGA's RS232R is a single-byte register with no flow control, read by a
+    /// cooperative poll, so a request fired with no gap overruns it: the next byte lands
+    /// before the poll grabbed the last, and the frame desyncs. (The device buffers a bulk
+    /// PUT *payload* itself, but the small request frames still need throttling.) Default
+    /// 1000 is ~2x the ~520us byte-time at 19200 baud -- reliable for automated/back-to-back
+    /// use; 0 = full line rate, fine only for hand-spaced commands. Ignored for FIFOs.
+    #[arg(long, value_name = "US", default_value_t = 1000)]
+    char_delay_us: u64,
+
     #[command(flatten)]
     serial: SerialOpts,
 
@@ -63,19 +77,11 @@ struct SerialOpts {
     serial: Option<PathBuf>,
 
     /// FIFO the emulator reads (we write). Must be paired with --serial-out.
-    #[arg(
-        long = "serial-in",
-        value_name = "PATH",
-        requires = "serial_out",
-    )]
+    #[arg(long = "serial-in", value_name = "PATH", requires = "serial_out")]
     serial_in: Option<PathBuf>,
 
     /// FIFO the emulator writes (we read). Must be paired with --serial-in.
-    #[arg(
-        long = "serial-out",
-        value_name = "PATH",
-        requires = "serial_in",
-    )]
+    #[arg(long = "serial-out", value_name = "PATH", requires = "serial_in")]
     serial_out: Option<PathBuf>,
 }
 
@@ -159,13 +165,19 @@ enum Cmd {
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     let timeout = Duration::from_secs_f64(cli.timeout.max(0.001));
-    let t = open_transport(&cli.serial, timeout)?;
+    let char_delay = Duration::from_micros(cli.char_delay_us);
+    let t = open_transport(&cli.serial, timeout, cli.baud, char_delay)?;
     dispatch(&t, cli.command)
 }
 
-fn open_transport(opts: &SerialOpts, timeout: Duration) -> Result<Transport> {
+fn open_transport(
+    opts: &SerialOpts,
+    timeout: Duration,
+    baud: u32,
+    char_delay: Duration,
+) -> Result<Transport> {
     match (&opts.serial, &opts.serial_in, &opts.serial_out) {
-        (Some(p), None, None) => transport::open_path(p, timeout),
+        (Some(p), None, None) => transport::open_path(p, timeout, baud, char_delay),
         (None, Some(i), Some(o)) => transport::open_fifos(i, o, timeout),
         (None, None, None) => Err(Error::NoSerial),
         // clap's `conflicts_with_all` + `requires` exhaust every other shape.
@@ -305,7 +317,17 @@ mod tests {
         assert!(parse(&["oat", "--serial", "p", "check"]).is_ok());
         assert!(parse(&["oat", "--serial-in", "a", "--serial-out", "b", "check"]).is_ok());
         assert!(parse(&["oat", "check"]).is_ok()); // NoSerial is reported later, with context
-        assert!(parse(&["oat", "--serial", "p", "--serial-in", "a", "--serial-out", "b", "check"]).is_err());
+        assert!(parse(&[
+            "oat",
+            "--serial",
+            "p",
+            "--serial-in",
+            "a",
+            "--serial-out",
+            "b",
+            "check"
+        ])
+        .is_err());
         assert!(parse(&["oat", "--serial-in", "a", "check"]).is_err());
         assert!(parse(&["oat", "--serial-out", "b", "check"]).is_err());
     }
