@@ -10,6 +10,7 @@
 mod cli;
 mod error;
 mod protocol;
+mod retry;
 mod text;
 mod tools;
 mod transport;

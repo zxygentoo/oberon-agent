@@ -107,6 +107,10 @@ Top-level `Makefile` drives everything; from a fresh `git clone --recurse-submod
   EO hot-swap).
 - `make clean` → `rm -rf build DiskImage`. `make distclean` → also wipes both cargo
   target dirs.
+- `test/stress.sh` (opt-in, **not** in `make test`) — transport stress bench:
+  size-sweep integrity, back-to-back reliability vs `--char-delay-us`, and an op
+  soak, against a real port (`test/stress.sh --serial /dev/ttyUSB1`) or a FIFO
+  pair. Characterizes the *link* (desync rate, retry headroom); see REAL-SERIAL.md.
 
 The CLI is also a normal Cargo crate — `cargo build --release` inside `oat/`, or
 `cargo install --path oat` to put `oat` on PATH.

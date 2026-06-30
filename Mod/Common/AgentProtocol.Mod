@@ -12,6 +12,8 @@ MODULE AgentProtocol;  (*the oat wire protocol, shared verbatim by both variants
     opPut = 1; opGet = 2; opCall = 3; opEdit = 4;
     stOk* = 0; stNotFound* = 1; stTrapped = 2; stError* = 3; stNoMatch = 4; stNotUnique = 5;
     editLim = 1024;                    (*max OLD length; oat falls back to GET+PUT beyond -- keep in sync with protocol.rs EDIT_OLD_LIMIT*)
+    recLim = 4000000;                  (*Rec busy-wait cap (~1s @25MHz): a lost byte aborts the frame instead of hanging the whole Oberon loop*)
+    maxPut = 10000H;                   (*64 KiB: PUT receive-buffer size and length cap (a larger PUT, or a corrupt count, gets stError)*)
 
   TYPE
     Executor* = PROCEDURE (cmd: ARRAY OF CHAR; par: Texts.Text): INTEGER;
@@ -22,6 +24,7 @@ MODULE AgentProtocol;  (*the oat wire protocol, shared verbatim by both variants
     exec: Executor;                    (*variant command executor; set by Start before the task ever runs*)
     inFlight: BOOLEAN;                 (*a command was running when a trap unwound the task*)
     flightBeg: INTEGER;                (*Oberon.Log.len at command start; the delta carries the TRAP line*)
+    rxOk: BOOLEAN;                     (*cleared by Rec on a receive timeout; short-circuits the rest of the frame*)
     EW: Texts.Writer;                  (*buffers EDIT's NEW text*)
     PW: Texts.Writer;                  (*builds CALL's par text*)
     par: Texts.Text;
@@ -29,11 +32,21 @@ MODULE AgentProtocol;  (*the oat wire protocol, shared verbatim by both variants
     M: INTEGER;                        (*DoEdit pattern length; global because Forward can't see DoEdit's locals*)
     pat, win: ARRAY editLim OF CHAR;   (*DoEdit pattern + sliding match window*)
     dis: ARRAY 256 OF INTEGER;         (*Boyer-Moore displacement table*)
+    pbuf: ARRAY maxPut OF BYTE;        (*DoPut payload buffer: receive the whole frame, then write*)
 
   (* --- serial byte layer (PCLink1's Rec/Send, status-gated) --- *)
 
-  PROCEDURE Rec(VAR x: BYTE);
-  BEGIN REPEAT UNTIL SYSTEM.BIT(stat, 0); SYSTEM.GET(data, x)
+  PROCEDURE Rec(VAR x: BYTE);   (*bounded: spin up to recLim for a byte. On timeout, clear
+    rxOk and short-circuit -- once rxOk is FALSE every later Rec in the frame returns at once,
+    so a lost byte aborts the frame (handlers check rxOk) instead of busy-waiting forever and
+    freezing the Oberon loop. The single-byte RS232 register has no flow control, so this is
+    the only line that can hang on a real UART.*)
+    VAR n: INTEGER;
+  BEGIN
+    IF rxOk THEN n := 0;
+      WHILE ~SYSTEM.BIT(stat, 0) & (n < recLim) DO INC(n) END ;
+      IF SYSTEM.BIT(stat, 0) THEN SYSTEM.GET(data, x) ELSE rxOk := FALSE END
+    END
   END Rec;
 
   PROCEDURE Send(x: BYTE);
@@ -73,24 +86,37 @@ MODULE AgentProtocol;  (*the oat wire protocol, shared verbatim by both variants
 
   (* --- request handlers --- *)
 
-  PROCEDURE DoPut;
-    VAR F: Files.File; R: Files.Rider; len, i: INTEGER; x: BYTE;
+  PROCEDURE DoPut;   (*Drain the whole payload into RAM with a tight Rec loop, THEN write the
+    file. Files.WriteByte hits Disk.PutSector (a slow SD/SPI write) at every sector boundary
+    -- the first at byte SectorSize-HeaderSize = 1024-352 = 672 -- and doing that inside the
+    receive loop stalls long enough to overrun the one-byte RS232 register and drop the next
+    byte. So receive first (no disk I/O between bytes), write after the wire is drained.*)
+    VAR F: Files.File; R: Files.Rider; len, i: INTEGER;
   BEGIN RecName(name); RecInt(len);
-    F := Files.New(name); Files.Set(R, F, 0); i := 0;
-    WHILE i < len DO Rec(x); Files.WriteByte(R, x); INC(i) END;
-    Files.Register(F);
-    Reply(stOk)
+    IF rxOk & (len >= 0) & (len <= maxPut) THEN
+      i := 0;
+      WHILE i < len DO Rec(pbuf[i]); INC(i) END ;        (*receive: RAM only, never overruns*)
+      IF rxOk THEN                                       (*whole frame arrived -> commit*)
+        F := Files.New(name); Files.Set(R, F, 0); i := 0;
+        WHILE i < len DO Files.WriteByte(R, pbuf[i]); INC(i) END ;
+        Files.Register(F); Reply(stOk)
+      END                                                (*else: lost byte -> abort, no reply*)
+    ELSIF rxOk THEN Reply(stError)                       (*frame intact but length out of range*)
+    END
   END DoPut;
 
   PROCEDURE DoGet;
     VAR F: Files.File; R: Files.Rider; len, i: INTEGER; x: BYTE;
-  BEGIN RecName(name); F := Files.Old(name);
-    IF F = NIL THEN
-      Reply(stNotFound)
-    ELSE
-      len := Files.Length(F); Files.Set(R, F, 0);
-      Send(rsync); Send(stOk); SendInt(len); i := 0;
-      WHILE i < len DO Files.ReadByte(R, x); Send(x); INC(i) END
+  BEGIN RecName(name);
+    IF rxOk THEN                       (*name fully received*)
+      F := Files.Old(name);
+      IF F = NIL THEN
+        Reply(stNotFound)
+      ELSE
+        len := Files.Length(F); Files.Set(R, F, 0);
+        Send(rsync); Send(stOk); SendInt(len); i := 0;
+        WHILE i < len DO Files.ReadByte(R, x); Send(x); INC(i) END
+      END
     END
   END DoGet;
 
@@ -102,10 +128,13 @@ MODULE AgentProtocol;  (*the oat wire protocol, shared verbatim by both variants
   BEGIN RecName(cmd); RecInt(len);
     NEW(par); Texts.Open(par, ""); i := 0;
     WHILE i < len DO Rec(x); Texts.Write(PW, CHR(x)); INC(i) END;
-    Texts.Append(par, PW.buf);
-    flightBeg := Oberon.Log.len; inFlight := TRUE;
-    IF exec # NIL THEN status := exec(cmd, par) ELSE status := stError END;
-    ReplyLog(status, flightBeg)
+    IF rxOk THEN                        (*whole frame arrived -> run the command*)
+      Texts.Append(par, PW.buf);
+      flightBeg := Oberon.Log.len; inFlight := TRUE;
+      IF exec # NIL THEN status := exec(cmd, par) ELSE status := stError END;
+      ReplyLog(status, flightBeg)
+    ELSE Texts.OpenWriter(PW)           (*lost byte -> drop the partial par, abort, no reply*)
+    END
   END DoCall;
 
   (*DoEdit: replace a unique occurrence of OLD by NEW inside a file, on the
@@ -133,46 +162,51 @@ MODULE AgentProtocol;  (*the oat wire protocol, shared verbatim by both variants
     END;
     RecInt(newLen); i := 0;                              (*NEW -> EW.buf, unbounded*)
     WHILE i < newLen DO Rec(x); Texts.Write(EW, CHR(x)); INC(i) END;
-    (*frame fully consumed -- safe to answer, and safe to recover from a trap*)
-    flightBeg := Oberon.Log.len; inFlight := TRUE;
-    IF (oldLen <= 0) OR (oldLen > editLim) THEN
-      Texts.OpenWriter(EW);                              (*drop buffered NEW*)
-      Reply(stError)
-    ELSIF Files.Old(name) = NIL THEN
-      Texts.OpenWriter(EW);
-      Reply(stNotFound)
+    IF ~rxOk THEN Texts.OpenWriter(EW)                   (*lost byte -> drop NEW, abort, no reply*)
     ELSE
-      NEW(T); Texts.Open(T, name);                       (*plain or formatted file*)
-      M := oldLen; count := 0; first := -1;
-      IF M <= T.len THEN
-        j := 0; WHILE j < 256 DO dis[j] := M; INC(j) END;
-        j := 0; WHILE j < M - 1 DO dis[ORD(pat[j])] := M - 1 - j; INC(j) END;
-        Texts.OpenReader(R, T, 0);
-        Forward(M, R); pos := M; done := FALSE;
-        REPEAT
-          j := M;
-          REPEAT DEC(j) UNTIL (j < 0) OR (win[j] # pat[j]);
-          IF j < 0 THEN INC(count);                      (*match ends at pos*)
-            IF first < 0 THEN first := pos - M END;
-            n := M                                       (*non-overlapping, like the host counts*)
-          ELSE n := dis[ORD(win[M - 1])]
-          END;
-          IF pos + n <= T.len THEN Forward(n, R); pos := pos + n ELSE done := TRUE END
-        UNTIL done
-      END;
-      IF count = 0 THEN
+      (*frame consumed -- safe to answer, and to recover from a trap. Only this branch arms
+        inFlight: the oldLen / Files.Old guards just Reply, but the edit below can trap. rxOk
+        is checked before committing, matching DoPut/DoCall.*)
+      flightBeg := Oberon.Log.len; inFlight := TRUE;
+      IF (oldLen <= 0) OR (oldLen > editLim) THEN
+        Texts.OpenWriter(EW);                            (*drop buffered NEW*)
+        Reply(stError)
+      ELSIF Files.Old(name) = NIL THEN
         Texts.OpenWriter(EW);
-        Reply(stNoMatch)
-      ELSIF count > 1 THEN
-        Texts.OpenWriter(EW);
-        inFlight := FALSE;
-        Send(rsync); Send(stNotUnique); SendInt(4); SendInt(count)
+        Reply(stNotFound)
       ELSE
-        NEW(B); Texts.OpenBuf(B);
-        Texts.Delete(T, first, first + M, B);            (*B receives the OLD chars, discarded*)
-        Texts.Insert(T, first, EW.buf);                  (*consumes and resets EW.buf*)
-        Texts.Close(T, name);                            (*atomic: Files.Register swaps the dir entry*)
-        Reply(stOk)
+        NEW(T); Texts.Open(T, name);                     (*plain or formatted file*)
+        M := oldLen; count := 0; first := -1;
+        IF M <= T.len THEN
+          j := 0; WHILE j < 256 DO dis[j] := M; INC(j) END;
+          j := 0; WHILE j < M - 1 DO dis[ORD(pat[j])] := M - 1 - j; INC(j) END;
+          Texts.OpenReader(R, T, 0);
+          Forward(M, R); pos := M; done := FALSE;
+          REPEAT
+            j := M;
+            REPEAT DEC(j) UNTIL (j < 0) OR (win[j] # pat[j]);
+            IF j < 0 THEN INC(count);                    (*match ends at pos*)
+              IF first < 0 THEN first := pos - M END;
+              n := M                                     (*non-overlapping, like the host counts*)
+            ELSE n := dis[ORD(win[M - 1])]
+            END;
+            IF pos + n <= T.len THEN Forward(n, R); pos := pos + n ELSE done := TRUE END
+          UNTIL done
+        END;
+        IF count = 0 THEN
+          Texts.OpenWriter(EW);
+          Reply(stNoMatch)
+        ELSIF count > 1 THEN
+          Texts.OpenWriter(EW);
+          inFlight := FALSE;
+          Send(rsync); Send(stNotUnique); SendInt(4); SendInt(count)
+        ELSE
+          NEW(B); Texts.OpenBuf(B);
+          Texts.Delete(T, first, first + M, B);          (*B receives the OLD chars, discarded*)
+          Texts.Insert(T, first, EW.buf);                (*consumes and resets EW.buf*)
+          Texts.Close(T, name);                          (*atomic: Files.Register swaps the dir entry*)
+          Reply(stOk)
+        END
       END
     END
   END DoEdit;
@@ -195,13 +229,16 @@ MODULE AgentProtocol;  (*the oat wire protocol, shared verbatim by both variants
   BEGIN
     IF inFlight THEN Recover END ;
     IF SYSTEM.BIT(stat, 0) THEN
+      rxOk := TRUE;                    (*fresh frame; Rec clears this on a mid-frame timeout*)
       Rec(b);                          (*sync; a non-sync byte is dropped to resync*)
-      IF b = sync THEN
+      IF rxOk & (b = sync) THEN
         Rec(op);
-        IF op = opPut THEN DoPut
-        ELSIF op = opGet THEN DoGet
-        ELSIF op = opCall THEN DoCall
-        ELSIF op = opEdit THEN DoEdit
+        IF rxOk THEN
+          IF op = opPut THEN DoPut
+          ELSIF op = opGet THEN DoGet
+          ELSIF op = opCall THEN DoCall
+          ELSIF op = opEdit THEN DoEdit
+          END
         END
       END
     END
@@ -219,5 +256,5 @@ MODULE AgentProtocol;  (*the oat wire protocol, shared verbatim by both variants
     END
   END Start;
 
-BEGIN Texts.OpenWriter(EW); Texts.OpenWriter(PW)
+BEGIN rxOk := TRUE; Texts.OpenWriter(EW); Texts.OpenWriter(PW)
 END AgentProtocol.

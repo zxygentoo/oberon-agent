@@ -108,6 +108,11 @@ $OAT unload Stars           # see "Unload" — PO needs operator permission firs
 $OAT load Stars
 ```
 
+> If the module installs a repeating task or holds a viewer, this reload **leaks**
+> the old copy and its task keeps running — see "Emulator vs real hardware". To
+> *tune* a running module (e.g. animation speed), add a live parameter command and
+> change it in place; reserve reload for real code changes.
+
 **Multi-line edits** — `edit` handles them: OLD may span lines, and the device
 matches and splices atomically in one round trip (OLD up to 1 KiB; longer falls
 back transparently to a read-modify-write). Mind your shell quoting. For large
@@ -169,6 +174,44 @@ Also: `oat unload` cannot reliably detect an in-use refusal on PO (the EO-only
 Treat it as PO — assume unsafe-unload, ask the user before every `unload`. Tell the
 user the image lacks the version-string patch and ask whether to proceed at their
 own risk.
+
+## Emulator vs real hardware
+
+PO and EO are **single-threaded**: one cooperative `Oberon.Loop` runs everything —
+your serial agent (`AgentProtocol`'s poll task), the garbage collector, mouse/cursor,
+and any task a module installs (`Oberon.NewTask` + `Oberon.Install`). Nothing
+preempts; tasks take turns. Two hazards follow, and a real UART makes the first one
+fatal.
+
+- **A busy installed task starves the agent.** A fast repeating task competes with the
+  serial poll for loop time. On the **emulator** (lossless, back-pressured FIFO) that
+  only makes `oat` laggy. On **real hardware** (single-byte UART register, no flow
+  control) the poll starts missing the request frame's first byte → requests desync and
+  time out, and `oat`'s auto-retry can't help because the poll never runs. Observed: a
+  50 ms animation task swung round-trips from ~60 ms to 30–40 s and made the link
+  unusable until reboot.
+  - Keep installed-task periods slow while you need the wire (≥ ~500 ms is comfortable;
+    sub-100 ms strangles it on hardware).
+  - Give such a module a **live parameter command** (e.g. `SetSpeed <ms>` that reinstalls
+    the task at a new period) and retune **in place** — never by reload. If the link goes
+    from responsive to persistently dead right after you start an animation, suspect
+    starvation, not transport.
+
+- **Task-installing modules don't cleanly reload.** A module that installs a task (or
+  holds a viewer) keeps a live self-reference — the task points into its own code. So EO
+  `unload` can't fully free it: it **hides** it as `*<name>`, its `FINAL` never runs, and
+  **the old task keeps firing**. Every reload leaks another hidden copy whose task is
+  still installed, and those pile onto the loop — exactly what starves the wire. (PO is
+  worse: no safe-unload at all — see Unload.)
+  - Don't reload to tweak a running module — change parameters in place (above).
+  - Before any `unload`, run the module's `Close`/stop command to remove its task and
+    clear viewer refs. Expect a hidden `*<name>` to remain anyway; it's harmless only
+    once idle (its frame/refs NIL). Reserve reload for genuine code changes, accept the
+    leak.
+
+This is the OS design, not something `oat` can fix from the host — keep durable demos
+slow-ticking and tunable in place. (See also the slow-transfer/`--timeout` note in
+Startup and the FINAL / `Close*` rules below.)
 
 ## Working rules
 

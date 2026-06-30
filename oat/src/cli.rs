@@ -9,6 +9,8 @@ use std::time::{Duration, Instant};
 use clap::{Args, Parser, Subcommand};
 
 use crate::error::{Error, Result};
+use crate::protocol::Request;
+use crate::retry::Retry;
 use crate::tools;
 use crate::transport::{self, Transport};
 
@@ -44,6 +46,31 @@ struct Cli {
     #[arg(long, value_name = "SECS", default_value_t = 15.0)]
     timeout: f64,
 
+    /// Baud rate for a real serial device (--serial). Ignored for FIFO pairs.
+    #[arg(long, value_name = "RATE", default_value_t = 19200)]
+    baud: u32,
+
+    /// Inter-byte ("character") delay for a real serial device (--serial), in microseconds.
+    /// The FPGA's RS232R is a single-byte register with no flow control, read by a
+    /// cooperative poll, so a request fired with no gap overruns it: the next byte lands
+    /// before the poll grabbed the last, and the frame desyncs. (The device buffers a bulk
+    /// PUT *payload* itself, but the small request frames still need throttling.) Default
+    /// 1000 is ~2x the ~520us byte-time at 19200 baud -- reliable for automated/back-to-back
+    /// use; 0 = full line rate, fine only for hand-spaced commands. Ignored for FIFOs.
+    #[arg(long, value_name = "US", default_value_t = 1000)]
+    char_delay_us: u64,
+
+    /// Re-send a request this many times if it desyncs (transport timeout or a
+    /// misframed reply) on a real serial device (--serial). The FPGA's single-
+    /// byte register drops a request frame when an Oberon.Loop stall (GC, other
+    /// tasks) outlasts the inter-byte gap; char-delay reduces this but can't
+    /// remove it. The device self-recovers per frame, so a re-send on a fresh
+    /// sync succeeds (measured: one retry ~82->97%, two ~100% on PO; EO needs
+    /// none). Only desyncs are retried, never tool-level errors. Ignored for
+    /// FIFOs (lossless).
+    #[arg(long, value_name = "N", default_value_t = 2)]
+    retries: u32,
+
     #[command(flatten)]
     serial: SerialOpts,
 
@@ -63,19 +90,11 @@ struct SerialOpts {
     serial: Option<PathBuf>,
 
     /// FIFO the emulator reads (we write). Must be paired with --serial-out.
-    #[arg(
-        long = "serial-in",
-        value_name = "PATH",
-        requires = "serial_out",
-    )]
+    #[arg(long = "serial-in", value_name = "PATH", requires = "serial_out")]
     serial_in: Option<PathBuf>,
 
     /// FIFO the emulator writes (we read). Must be paired with --serial-in.
-    #[arg(
-        long = "serial-out",
-        value_name = "PATH",
-        requires = "serial_in",
-    )]
+    #[arg(long = "serial-out", value_name = "PATH", requires = "serial_in")]
     serial_out: Option<PathBuf>,
 }
 
@@ -159,13 +178,27 @@ enum Cmd {
 pub fn run() -> Result<()> {
     let cli = Cli::parse();
     let timeout = Duration::from_secs_f64(cli.timeout.max(0.001));
-    let t = open_transport(&cli.serial, timeout)?;
-    dispatch(&t, cli.command)
+    let char_delay = Duration::from_micros(cli.char_delay_us);
+    let t = open_transport(&cli.serial, timeout, cli.baud, char_delay)?;
+    // Retry only the lossy real-serial path. The FIFO/emulator transport is
+    // lossless and back-pressured, so a timeout there is a genuine hang — pass it
+    // straight through rather than waiting out N more timeouts.
+    let retries = if cli.serial.serial.is_some() {
+        cli.retries
+    } else {
+        0
+    };
+    dispatch(&Retry::new(t, retries), cli.command)
 }
 
-fn open_transport(opts: &SerialOpts, timeout: Duration) -> Result<Transport> {
+fn open_transport(
+    opts: &SerialOpts,
+    timeout: Duration,
+    baud: u32,
+    char_delay: Duration,
+) -> Result<Transport> {
     match (&opts.serial, &opts.serial_in, &opts.serial_out) {
-        (Some(p), None, None) => transport::open_path(p, timeout),
+        (Some(p), None, None) => transport::open_path(p, timeout, baud, char_delay),
         (None, Some(i), Some(o)) => transport::open_fifos(i, o, timeout),
         (None, None, None) => Err(Error::NoSerial),
         // clap's `conflicts_with_all` + `requires` exhaust every other shape.
@@ -173,7 +206,7 @@ fn open_transport(opts: &SerialOpts, timeout: Duration) -> Result<Transport> {
     }
 }
 
-fn dispatch(t: &Transport, cmd: Cmd) -> Result<()> {
+fn dispatch<R: Request>(t: &R, cmd: Cmd) -> Result<()> {
     match cmd {
         Cmd::Check => cmd_check(t),
         Cmd::Read { path } => cmd_read(t, &path),
@@ -191,7 +224,7 @@ fn dispatch(t: &Transport, cmd: Cmd) -> Result<()> {
 
 // --- subcommand impls ---
 
-fn cmd_check(t: &Transport) -> Result<()> {
+fn cmd_check<R: Request>(t: &R) -> Result<()> {
     let start = Instant::now();
     let version = tools::version(t)?;
     let rtt = start.elapsed();
@@ -206,14 +239,14 @@ fn cmd_check(t: &Transport) -> Result<()> {
     Ok(())
 }
 
-fn cmd_read(t: &Transport, path: &str) -> Result<()> {
+fn cmd_read<R: Request>(t: &R, path: &str) -> Result<()> {
     let content = tools::read_file(t, path)?;
     let mut out = std::io::stdout().lock();
     out.write_all(content.as_bytes())?;
     Ok(())
 }
 
-fn cmd_write(t: &Transport, path: &str) -> Result<()> {
+fn cmd_write<R: Request>(t: &R, path: &str) -> Result<()> {
     let mut content = String::new();
     std::io::stdin().read_to_string(&mut content)?;
     tools::write_file(t, path, &content)?;
@@ -221,31 +254,31 @@ fn cmd_write(t: &Transport, path: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_edit(t: &Transport, path: &str, old: &str, new: &str) -> Result<()> {
+fn cmd_edit<R: Request>(t: &R, path: &str, old: &str, new: &str) -> Result<()> {
     tools::edit_file(t, path, old, new)?;
     println!("ok edited {path}");
     Ok(())
 }
 
-fn cmd_delete(t: &Transport, path: &str) -> Result<()> {
+fn cmd_delete<R: Request>(t: &R, path: &str) -> Result<()> {
     tools::delete_file(t, path)?;
     println!("ok deleted {path}");
     Ok(())
 }
 
-fn cmd_list_files(t: &Transport, prefix: &str) -> Result<()> {
+fn cmd_list_files<R: Request>(t: &R, prefix: &str) -> Result<()> {
     let log = tools::list_files(t, prefix)?;
     print!("{log}");
     Ok(())
 }
 
-fn cmd_list_modules(t: &Transport) -> Result<()> {
+fn cmd_list_modules<R: Request>(t: &R) -> Result<()> {
     let log = tools::list_modules(t)?;
     print!("{log}");
     Ok(())
 }
 
-fn cmd_compile(t: &Transport, name: &str, new_symbol: bool) -> Result<()> {
+fn cmd_compile<R: Request>(t: &R, name: &str, new_symbol: bool) -> Result<()> {
     let r = tools::compile_module(t, name, new_symbol)?;
     print_log(&r.output);
     if r.failed {
@@ -254,13 +287,13 @@ fn cmd_compile(t: &Transport, name: &str, new_symbol: bool) -> Result<()> {
     Ok(())
 }
 
-fn cmd_load(t: &Transport, name: &str) -> Result<()> {
+fn cmd_load<R: Request>(t: &R, name: &str) -> Result<()> {
     tools::load_module(t, name)?;
     println!("ok loaded {name}");
     Ok(())
 }
 
-fn cmd_unload(t: &Transport, name: &str) -> Result<()> {
+fn cmd_unload<R: Request>(t: &R, name: &str) -> Result<()> {
     let log = tools::unload_module(t, name)?;
     println!("ok unloaded {name}");
     for line in log.trim().lines() {
@@ -269,7 +302,7 @@ fn cmd_unload(t: &Transport, name: &str) -> Result<()> {
     Ok(())
 }
 
-fn cmd_call(t: &Transport, cmd: &str, args: &str) -> Result<()> {
+fn cmd_call<R: Request>(t: &R, cmd: &str, args: &str) -> Result<()> {
     let r = tools::run_command(t, cmd, args)?;
     print_log(&r.log);
     r.outcome()
@@ -305,7 +338,17 @@ mod tests {
         assert!(parse(&["oat", "--serial", "p", "check"]).is_ok());
         assert!(parse(&["oat", "--serial-in", "a", "--serial-out", "b", "check"]).is_ok());
         assert!(parse(&["oat", "check"]).is_ok()); // NoSerial is reported later, with context
-        assert!(parse(&["oat", "--serial", "p", "--serial-in", "a", "--serial-out", "b", "check"]).is_err());
+        assert!(parse(&[
+            "oat",
+            "--serial",
+            "p",
+            "--serial-in",
+            "a",
+            "--serial-out",
+            "b",
+            "check"
+        ])
+        .is_err());
         assert!(parse(&["oat", "--serial-in", "a", "check"]).is_err());
         assert!(parse(&["oat", "--serial-out", "b", "check"]).is_err());
     }
