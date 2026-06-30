@@ -13,8 +13,8 @@ a decent LLM's context window — do the math yourself.
 Three pieces make this work:
 
 - **`oat`** — *oberon-agent-tool* — a stateless Rust CLI. Each invocation opens the
-  emulator's serial line, sends one PUT/GET/CALL/EDIT request, prints the result, and
-  exits.
+  serial line — an emulator FIFO or a real FPGA's UART — sends one PUT/GET/CALL/EDIT
+  request, prints the result, and exits.
 - **`AgentTool.Mod`** — the on-system half, running *inside* Oberon. It listens on the
   serial line and answers each request from within the live system: writing files,
   calling commands, hot-swapping modules. One per variant
@@ -90,7 +90,10 @@ mkfifo /tmp/p.in /tmp/p.out          # once
 make eo-emu                          # or `make po-emu`, or run `risc` directly
 ```
 
-Or connect to an FPGA station over RS232.
+Or drive a real Oberon on FPGA silicon — point `oat` at the serial device with
+`--serial /dev/ttyUSB1` (`--baud`, `--char-delay-us`, and `--retries` tune the UART
+link; the defaults are sized for 19200 8N1). This has been validated on a Nexys 4;
+see [REAL-SERIAL.md](REAL-SERIAL.md) for the transport details and gotchas.
 
 ### 7. Play!
 
@@ -106,7 +109,9 @@ You get the idea :)
 
 > [!TIP]
 > Use Extended Oberon for heavy modification — it has safe module unloading, so
-> the system is much harder to hang.
+> the system is much harder to hang. It's not hang-proof, though: the system is a
+> single cooperative loop, so a fast background task or repeated live reloads can
+> still wedge it. SKILL.md's "Emulator vs real hardware" section has the details.
 
 ## Upstream pieces we depend on
 
