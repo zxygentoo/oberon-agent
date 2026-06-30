@@ -34,6 +34,15 @@ pub trait Request {
     fn send(&self, frame: &[u8]) -> Result<Response>;
 }
 
+/// Lets a `&R` stand in wherever a `Request` is expected (e.g. wrapping a
+/// borrowed seam in `Retry` without moving it). `send` takes `&self`, so the
+/// forward is free.
+impl<R: Request + ?Sized> Request for &R {
+    fn send(&self, frame: &[u8]) -> Result<Response> {
+        (**self).send(frame)
+    }
+}
+
 /// Device status of a RESPONSE. The wire byte is an encoding detail private
 /// to this module — upper layers match on variants. `Other` carries status
 /// bytes this build doesn't know (newer device), kept for diagnostics.
