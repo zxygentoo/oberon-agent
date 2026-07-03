@@ -18,7 +18,8 @@ Digilent Nexys 4) via `oat`, to debug the system from the inside. The link:
 oat (host) <-> /dev/ttyUSB1 <-> FT2232 USB-UART <-> FPGA RS232R/RS232T <-> AgentTool (Oberon)
 ```
 
-19200 baud, 8N1, **no flow control**. The FPGA UART is Wirth's OberonStation `RS232R`/
+115200 baud on the current 60 MHz FPGA build (19200 on the faithful 25 MHz build these
+measurements were first made at), 8N1, **no flow control**. The FPGA UART is Wirth's OberonStation `RS232R`/
 `RS232T` (a faithful, cosim-verified port): a **single-byte receive register, no FIFO**.
 `AgentTool` autostarts on boot (an `Oberon.Mod` patch loads it), so no keyboard is needed.
 The agent's poll runs as **one cooperative task** in `Oberon.Loop` — it only reads the wire
@@ -64,8 +65,10 @@ back-to-back always does** (observed: `check` works once after a fresh boot, the
 immediately-following `list-modules` desyncs the agent until reset).
 
 **Fix:** `oat --char-delay-us` — the inter-byte / "character delay" knob standard serial
-terminals expose (TeraTerm "transmit delay", minicom "character pacing"), **default
+terminals expose (TeraTerm "transmit delay", minicom "character pacing"), then **default
 1000 µs** ≈ 2× the ~520 µs byte-time at 19200, so the poll reliably catches each byte.
+(Since retuned to **600 µs** for the 60 MHz build — the binding constraint is the device
+poll window, not the byte-time, and 600 runs 100% back-to-back with retries.)
 
 > **Correction (stress pass, 2026-06-30).** "All reliable at the default" was based on a
 > handful of hand-run commands. Measured properly, the default is reliable *on Extended
@@ -106,12 +109,12 @@ The transport had only ever run against emulator FIFOs. Three real-UART gaps, in
 
 1. **Baud was never set.** `make_raw()` gives 8N1 but leaves the line *speed* untouched —
    whatever the port last had (we measured the FTDI sitting at 115200). `--baud`
-   (default 19200) → `Termios::set_speed`.
+   (then default 19200; now 115200, the 60 MHz build's rate) → `Termios::set_speed`.
 2. **No input flush between invocations.** A late/lost reply leaves bytes in the OS buffer
    that the next run reads first, shifting every field ("no version string", empty
    `list-files`). `drain_stale()` before each send.
-3. **`--char-delay-us`** — Overrun 2's fix, above (default 1000; 0 for the lossless FIFO
-   path, which ignores it).
+3. **`--char-delay-us`** — Overrun 2's fix, above (now default 600; 0 for the lossless
+   FIFO path, which ignores it).
 
 ## Root cause, in one line
 
