@@ -47,17 +47,25 @@ struct Cli {
     timeout: f64,
 
     /// Baud rate for a real serial device (--serial). Ignored for FIFO pairs.
-    #[arg(long, value_name = "RATE", default_value_t = 19200)]
+    /// Default 115200 matches the 60 MHz FPGA's default UART mode. Reads (device->host)
+    /// are wire-limited, so this streams them ~5x faster than 19200 (measured ~10 KB/s
+    /// vs ~1.9 KB/s over the real link); writes are poll-limited (see --char-delay-us)
+    /// and gain only a little.
+    #[arg(long, value_name = "RATE", default_value_t = 115200)]
     baud: u32,
 
     /// Inter-byte ("character") delay for a real serial device (--serial), in microseconds.
     /// The FPGA's RS232R is a single-byte register with no flow control, read by a
     /// cooperative poll, so a request fired with no gap overruns it: the next byte lands
-    /// before the poll grabbed the last, and the frame desyncs. (The device buffers a bulk
-    /// PUT *payload* itself, but the small request frames still need throttling.) Default
-    /// 1000 is ~2x the ~520us byte-time at 19200 baud -- reliable for automated/back-to-back
-    /// use; 0 = full line rate, fine only for hand-spaced commands. Ignored for FIFOs.
-    #[arg(long, value_name = "US", default_value_t = 1000)]
+    /// before the poll grabbed the last, and the frame desyncs. This throttles *every*
+    /// host->device byte -- requests and the PUT payload alike; the device does not buffer
+    /// a bulk payload at wire rate (measured: char-delay 0 desyncs a multi-KB write). So
+    /// writes are char-delay-limited (~poll rate, baud-independent) while reads stream
+    /// freely device->host. Default 600 is the reliable floor at 60 MHz (poll window
+    /// ~1.2ms/byte; with retries, 600us runs 100% back-to-back -- ~2x throughput over the
+    /// old 1000). Lower (400-500) trades margin for write speed; 0 = full line rate,
+    /// hand-spaced commands only. Ignored for FIFOs.
+    #[arg(long, value_name = "US", default_value_t = 600)]
     char_delay_us: u64,
 
     /// Re-send a request this many times if it desyncs (transport timeout or a
@@ -67,8 +75,9 @@ struct Cli {
     /// remove it. The device self-recovers per frame, so a re-send on a fresh
     /// sync succeeds (measured: one retry ~82->97%, two ~100% on PO; EO needs
     /// none). Only desyncs are retried, never tool-level errors. Ignored for
-    /// FIFOs (lossless).
-    #[arg(long, value_name = "N", default_value_t = 2)]
+    /// FIFOs (lossless). Default 3 gives a little extra headroom for 115200's
+    /// tighter request framing.
+    #[arg(long, value_name = "N", default_value_t = 3)]
     retries: u32,
 
     #[command(flatten)]

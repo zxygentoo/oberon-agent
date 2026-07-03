@@ -92,7 +92,9 @@ make eo-emu                          # or `make po-emu`, or run `risc` directly
 
 Or drive a real Oberon on FPGA silicon — point `oat` at the serial device with
 `--serial /dev/ttyUSB1` (`--baud`, `--char-delay-us`, and `--retries` tune the UART
-link; the defaults are sized for 19200 8N1). This has been validated on a Nexys 4;
+link; the defaults — **115200 8N1, 600 µs char-delay** — match the 60 MHz FPGA build's
+UART and stream reads ~5× faster than the old 19200. For a faithful 25 MHz build use
+`--baud 19200 --char-delay-us 1000`). This has been validated on a Nexys 4;
 see [REAL-SERIAL.md](REAL-SERIAL.md) for the transport details and gotchas.
 
 ### 7. Play!
